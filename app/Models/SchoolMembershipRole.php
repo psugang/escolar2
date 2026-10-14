@@ -12,6 +12,9 @@ class SchoolMembershipRole extends Model
         'role',
     ];
 
+    /**
+     * @return BelongsTo<SchoolMembership, $this>
+     */
     public function membership(): BelongsTo
     {
         return $this->belongsTo(SchoolMembership::class, 'school_membership_id');

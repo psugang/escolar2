@@ -15,9 +15,11 @@ class Shift extends Model
         'name',
     ];
 
+    /**
+     * @return HasMany<SchoolGroup, $this>
+     */
     public function schoolGroups(): HasMany
     {
         return $this->hasMany(SchoolGroup::class);
     }
 }
-

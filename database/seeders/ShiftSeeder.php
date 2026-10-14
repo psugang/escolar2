@@ -10,14 +10,13 @@ class ShiftSeeder extends Seeder
     public function run(): void
     {
         Shift::updateOrCreate(
-            ['code' => 'MAT'],
+            ['code' => 'MATUTINO'],
             ['name' => 'Matutino'],
         );
 
         Shift::updateOrCreate(
-            ['code' => 'VES'],
+            ['code' => 'VESPERTINO'],
             ['name' => 'Vespertino'],
         );
     }
 }
-

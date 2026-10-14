@@ -10,25 +10,65 @@
                 <flux:sidebar.collapse class="lg:hidden" />
             </flux:sidebar.header>
 
+            @php
+                $activeSchool = request()->route('school');
+                if (is_string($activeSchool)) {
+                    $activeSchool = \App\Models\School::find($activeSchool);
+                }
+            @endphp
+
             <flux:sidebar.nav>
-                <flux:sidebar.group :heading="__('Platform')" class="grid">
-                    <flux:sidebar.item icon="home" :href="route('dashboard')" :current="request()->routeIs('dashboard')" wire:navigate>
-                        {{ __('Dashboard') }}
-                    </flux:sidebar.item>
-                </flux:sidebar.group>
+                @if ($activeSchool)
+                    <flux:sidebar.group :heading="'Plantel: ' . Str::limit($activeSchool->name, 22)" class="grid">
+                        <flux:sidebar.item icon="chart-bar" :href="route('school.dashboard', $activeSchool)" :current="request()->routeIs('school.dashboard')" wire:navigate>
+                            Panel de Escuela
+                        </flux:sidebar.item>
+                        <flux:sidebar.item icon="calendar" :href="route('school.years.index', $activeSchool)" :current="request()->routeIs('school.years.*')" wire:navigate>
+                            Ciclos y Grupos
+                        </flux:sidebar.item>
+                        <flux:sidebar.item icon="academic-cap" :href="route('school.students.index', $activeSchool)" :current="request()->routeIs('school.students.*')" wire:navigate>
+                            Alumnos
+                        </flux:sidebar.item>
+                        <flux:sidebar.item icon="users" :href="route('school.teachers.index', $activeSchool)" :current="request()->routeIs('school.teachers.*')" wire:navigate>
+                            Profesores
+                        </flux:sidebar.item>
+                        <flux:sidebar.item icon="book-open" :href="route('school.classes.index', $activeSchool)" :current="request()->routeIs('school.classes.*')" wire:navigate>
+                            Clases y Talleres
+                        </flux:sidebar.item>
+                        <flux:sidebar.item icon="clipboard-document-check" :href="route('school.attendance.daily', $activeSchool)" :current="request()->routeIs('school.attendance.*') && !request()->routeIs('school.attendance.justifications')" wire:navigate>
+                            Pase de Asistencia
+                        </flux:sidebar.item>
+                        <flux:sidebar.item icon="document-text" :href="route('school.attendance.justifications', $activeSchool)" :current="request()->routeIs('school.attendance.justifications')" wire:navigate>
+                            Justificantes
+                        </flux:sidebar.item>
+                        <flux:sidebar.item icon="chart-pie" :href="route('school.reports.index', $activeSchool)" :current="request()->routeIs('school.reports.*')" wire:navigate>
+                            Reportes
+                        </flux:sidebar.item>
+                        <flux:sidebar.item icon="shield-check" :href="route('school.audit.index', $activeSchool)" :current="request()->routeIs('school.audit.*')" wire:navigate>
+                            Auditoría
+                        </flux:sidebar.item>
+                        <flux:sidebar.item icon="arrow-left" :href="route('dashboard')" wire:navigate>
+                            Cambiar Plantel
+                        </flux:sidebar.item>
+                    </flux:sidebar.group>
+                @else
+                    <flux:sidebar.group :heading="__('Platform')" class="grid">
+                        <flux:sidebar.item icon="home" :href="route('dashboard')" :current="request()->routeIs('dashboard')" wire:navigate>
+                            {{ __('Dashboard') }}
+                        </flux:sidebar.item>
+                    </flux:sidebar.group>
+                @endif
+
+                @if (auth()->user()?->isGlobalAdmin())
+                    <flux:sidebar.group heading="Administración Global" class="grid">
+                        <flux:sidebar.item icon="building-library" :href="route('admin.schools.index')" :current="request()->routeIs('admin.schools.*')" wire:navigate>
+                            Escuelas
+                        </flux:sidebar.item>
+                    </flux:sidebar.group>
+                @endif
             </flux:sidebar.nav>
 
             <flux:spacer />
-
-            <flux:sidebar.nav>
-                <flux:sidebar.item icon="folder-git-2" href="https://github.com/laravel/livewire-starter-kit" target="_blank">
-                    {{ __('Repository') }}
-                </flux:sidebar.item>
-
-                <flux:sidebar.item icon="book-open-text" href="https://laravel.com/docs/starter-kits#livewire" target="_blank">
-                    {{ __('Documentation') }}
-                </flux:sidebar.item>
-            </flux:sidebar.nav>
 
             <x-desktop-user-menu class="hidden lg:block" :name="auth()->user()->name" />
         </flux:sidebar>
