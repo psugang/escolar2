@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="{{ str_replace('_', '-', app()->getLocale()) }}" class="dark">
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
     <head>
         @include('partials.head')
     </head>
-    <body class="min-h-screen bg-white dark:bg-zinc-800">
-        <flux:sidebar sticky collapsible="mobile" class="border-e border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
-            <flux:sidebar.header>
+    <body class="min-h-screen bg-zinc-50/60 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100">
+        <flux:sidebar sticky collapsible="mobile" class="border-e border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+            <flux:sidebar.header class="px-2 pt-3 pb-2">
                 <x-app-logo :sidebar="true" href="{{ route('dashboard') }}" wire:navigate />
                 <flux:sidebar.collapse class="lg:hidden" />
             </flux:sidebar.header>
@@ -17,9 +17,25 @@
                 }
             @endphp
 
-            <flux:sidebar.nav>
+            <flux:sidebar.nav class="space-y-1">
                 @if ($activeSchool)
-                    <flux:sidebar.group :heading="'Plantel: ' . Str::limit($activeSchool->name, 22)" class="grid">
+                    <!-- Identificador del Plantel Activo -->
+                    <div class="mx-1 mb-2 px-3 py-2 rounded-lg bg-zinc-100/80 dark:bg-zinc-800/60 border border-zinc-200/60 dark:border-zinc-700/60">
+                        <div class="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                            <span class="inline-block size-2 rounded-full bg-emerald-500"></span>
+                            <span>Plantel Activo</span>
+                        </div>
+                        <div class="font-semibold text-sm text-zinc-900 dark:text-zinc-100 truncate mt-0.5" title="{{ $activeSchool->name }}">
+                            {{ $activeSchool->name }}
+                        </div>
+                        @if ($activeSchool->code)
+                            <div class="text-[11px] font-mono text-zinc-500 dark:text-zinc-400">
+                                C.C.T. {{ $activeSchool->code }}
+                            </div>
+                        @endif
+                    </div>
+
+                    <flux:sidebar.group heading="Gestión Escolar" class="grid gap-0.5">
                         <flux:sidebar.item icon="chart-bar" :href="route('school.dashboard', $activeSchool)" :current="request()->routeIs('school.dashboard')" wire:navigate>
                             Panel de Escuela
                         </flux:sidebar.item>
@@ -47,12 +63,15 @@
                         <flux:sidebar.item icon="shield-check" :href="route('school.audit.index', $activeSchool)" :current="request()->routeIs('school.audit.*')" wire:navigate>
                             Auditoría
                         </flux:sidebar.item>
+                    </flux:sidebar.group>
+
+                    <flux:sidebar.group class="grid gap-0.5 mt-2 pt-2 border-t border-zinc-200/60 dark:border-zinc-800">
                         <flux:sidebar.item icon="arrow-left" :href="route('dashboard')" wire:navigate>
                             Cambiar Plantel
                         </flux:sidebar.item>
                     </flux:sidebar.group>
                 @else
-                    <flux:sidebar.group :heading="__('Platform')" class="grid">
+                    <flux:sidebar.group :heading="__('Platform')" class="grid gap-0.5">
                         <flux:sidebar.item icon="home" :href="route('dashboard')" :current="request()->routeIs('dashboard')" wire:navigate>
                             {{ __('Dashboard') }}
                         </flux:sidebar.item>
@@ -60,7 +79,7 @@
                 @endif
 
                 @if (auth()->user()?->isGlobalAdmin())
-                    <flux:sidebar.group heading="Administración Global" class="grid">
+                    <flux:sidebar.group heading="Administración Global" class="grid gap-0.5 mt-2 pt-2 border-t border-zinc-200/60 dark:border-zinc-800">
                         <flux:sidebar.item icon="building-library" :href="route('admin.schools.index')" :current="request()->routeIs('admin.schools.*')" wire:navigate>
                             Escuelas
                         </flux:sidebar.item>
@@ -70,12 +89,23 @@
 
             <flux:spacer />
 
-            <x-desktop-user-menu class="hidden lg:block" :name="auth()->user()->name" />
+            <x-desktop-user-menu class="hidden lg:block border-t border-zinc-200/60 dark:border-zinc-800 pt-3" :name="auth()->user()->name" />
         </flux:sidebar>
 
         <!-- Mobile User Menu -->
-        <flux:header class="lg:hidden">
+        <flux:header class="lg:hidden border-b border-zinc-200/80 bg-white/95 backdrop-blur-xs dark:border-zinc-800 dark:bg-zinc-900/95 px-4 py-2">
             <flux:sidebar.toggle class="lg:hidden" icon="bars-2" inset="left" />
+
+            @if ($activeSchool)
+                <div class="flex items-center gap-2 max-w-[190px] sm:max-w-xs truncate">
+                    <span class="inline-block size-2 shrink-0 rounded-full bg-emerald-500"></span>
+                    <span class="font-semibold text-xs text-zinc-900 dark:text-zinc-100 truncate">
+                        {{ $activeSchool->name }}
+                    </span>
+                </div>
+            @else
+                <x-app-logo href="{{ route('dashboard') }}" wire:navigate class="scale-90" />
+            @endif
 
             <flux:spacer />
 
