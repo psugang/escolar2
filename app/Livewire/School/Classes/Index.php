@@ -3,15 +3,19 @@
 namespace App\Livewire\School\Classes;
 
 use App\Models\ClassEnrollment;
+use App\Models\ClassSchedule;
+use App\Models\ClassSession;
 use App\Models\School;
 use App\Models\SchoolClass;
 use App\Models\SchoolGroup;
 use App\Models\Student;
 use App\Models\Subject;
 use App\Models\Teacher;
+use App\Services\ClassSessionGenerator;
 use Flux\Flux;
 use Illuminate\Contracts\View\View;
 use Illuminate\Validation\Rule;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Livewire\WithPagination;
@@ -21,6 +25,7 @@ class Index extends Component
 {
     use WithPagination;
 
+    #[Locked]
     public School $school;
 
     public string $activeTab = 'classes'; // 'classes' | 'subjects'
@@ -75,8 +80,23 @@ class Index extends Component
 
     public string $deletingClassName = '';
 
+    // Modal Class Schedules
+    public bool $showScheduleModal = false;
+
+    public ?string $scheduleClassId = null;
+
+    public ?SchoolClass $scheduleClass = null;
+
+    public int $newScheduleDay = 1;
+
+    public string $newScheduleStartTime = '07:00';
+
+    public string $newScheduleEndTime = '07:50';
+
     public function mount(School $school): void
     {
+        abort_if(auth()->user()?->isTeacherOnly($school), 403);
+
         $this->school = $school;
 
         $activeYear = $this->school->schoolYears()
@@ -235,7 +255,7 @@ class Index extends Component
     public function openWorkshopStudentsModal(string $classId): void
     {
         $this->selectedWorkshopId = $classId;
-        $this->selectedWorkshop = SchoolClass::with([
+        $this->selectedWorkshop = $this->school->schoolClasses()->with([
             'workshopStudents.currentEnrollment.schoolGroup',
         ])->findOrFail($classId);
 
@@ -250,7 +270,7 @@ class Index extends Component
             'studentToEnrollId' => ['required', 'exists:students,id'],
         ]);
 
-        $workshop = SchoolClass::findOrFail($this->selectedWorkshopId);
+        $workshop = $this->school->schoolClasses()->findOrFail($this->selectedWorkshopId);
 
         $alreadyEnrolled = ClassEnrollment::where('school_class_id', $workshop->id)
             ->where('student_id', $this->studentToEnrollId)
@@ -279,7 +299,7 @@ class Index extends Component
             ->where('student_id', $studentId)
             ->delete();
 
-        $this->selectedWorkshop = SchoolClass::with([
+        $this->selectedWorkshop = $this->school->schoolClasses()->with([
             'workshopStudents.currentEnrollment.schoolGroup',
         ])->findOrFail($this->selectedWorkshopId);
 
@@ -288,7 +308,7 @@ class Index extends Component
 
     public function openDeleteClassModal(string $classId): void
     {
-        $class = SchoolClass::findOrFail($classId);
+        $class = $this->school->schoolClasses()->findOrFail($classId);
         $this->deletingClassId = $class->id;
         $this->deletingClassName = $class->display_name;
         $this->showDeleteClassModal = true;
@@ -296,13 +316,100 @@ class Index extends Component
 
     public function deleteClass(): void
     {
-        $class = SchoolClass::findOrFail($this->deletingClassId);
+        $class = $this->school->schoolClasses()->findOrFail($this->deletingClassId);
         $class->delete();
 
         $this->showDeleteClassModal = false;
         $this->reset(['deletingClassId', 'deletingClassName']);
 
         Flux::toast(variant: 'success', text: 'Clase/taller eliminada.');
+    }
+
+    public function openScheduleModal(string $classId): void
+    {
+        $this->scheduleClassId = $classId;
+        $this->scheduleClass = $this->school->schoolClasses()->with(['schedules', 'subject', 'schoolGroup.shift', 'teacher', 'schoolYear'])->findOrFail($classId);
+        $this->newScheduleDay = 1;
+        $this->newScheduleStartTime = '07:00';
+        $this->newScheduleEndTime = '07:50';
+        $this->resetValidation();
+        $this->showScheduleModal = true;
+    }
+
+    public function addSchedule(ClassSessionGenerator $generator): void
+    {
+        $this->validate([
+            'newScheduleDay' => ['required', 'integer', 'between:1,6'],
+            'newScheduleStartTime' => ['required', 'date_format:H:i'],
+            'newScheduleEndTime' => ['required', 'date_format:H:i', 'after:newScheduleStartTime'],
+        ], [
+            'newScheduleDay.required' => 'Selecciona un día de la semana.',
+            'newScheduleStartTime.required' => 'La hora de inicio es requerida.',
+            'newScheduleEndTime.required' => 'La hora de fin es requerida.',
+            'newScheduleEndTime.after' => 'La hora de fin debe ser posterior a la de inicio.',
+        ]);
+
+        if (! $this->scheduleClass) {
+            return;
+        }
+
+        $class = $this->scheduleClass;
+        $effectiveFrom = $class->schoolYear->starts_on ?? today();
+
+        ClassSchedule::create([
+            'school_class_id' => $class->id,
+            'day_of_week' => $this->newScheduleDay,
+            'start_time' => $this->newScheduleStartTime,
+            'end_time' => $this->newScheduleEndTime,
+            'effective_from' => $effectiveFrom,
+        ]);
+
+        $generator->generateForClass($class->fresh(['schedules', 'schoolYear']));
+
+        $this->scheduleClass = $class->fresh(['schedules', 'subject', 'schoolGroup.shift', 'teacher', 'schoolYear']);
+        Flux::toast(variant: 'success', text: 'Horario agregado y sesiones del ciclo sincronizadas.');
+    }
+
+    public function deleteSchedule(string $scheduleId): void
+    {
+        $schedule = ClassSchedule::findOrFail($scheduleId);
+        $class = $this->school->schoolClasses()->findOrFail($schedule->school_class_id);
+
+        ClassSession::where('school_class_id', $class->id)
+            ->where('start_time', $schedule->start_time)
+            ->whereDoesntHave('attendances')
+            ->whereDate('date', '>=', today())
+            ->delete();
+
+        $schedule->delete();
+
+        if ($this->scheduleClass) {
+            $this->scheduleClass = $class->fresh(['schedules', 'subject', 'schoolGroup.shift', 'teacher', 'schoolYear']);
+        }
+
+        Flux::toast(variant: 'success', text: 'Horario eliminado.');
+    }
+
+    public function syncClassSessions(string $classId, ClassSessionGenerator $generator): void
+    {
+        $class = $this->school->schoolClasses()->with(['schedules', 'schoolYear'])->findOrFail($classId);
+        $count = $generator->generateForClass($class);
+
+        Flux::toast(variant: 'success', text: "Se sincronizaron {$count} sesiones para el ciclo escolar.");
+    }
+
+    public function syncAllYearSessions(ClassSessionGenerator $generator): void
+    {
+        if (! $this->filterYearId) {
+            Flux::toast(variant: 'danger', text: 'Selecciona primero un ciclo escolar.');
+
+            return;
+        }
+
+        $year = $this->school->schoolYears()->findOrFail($this->filterYearId);
+        $count = $generator->generateForSchoolYear($year);
+
+        Flux::toast(variant: 'success', text: "Se sincronizaron {$count} sesiones para las clases del ciclo {$year->name}.");
     }
 
     public function render(): View
@@ -321,7 +428,7 @@ class Index extends Component
                         ->orWhereHas('teacher', fn ($tq) => $tq->whereLike('first_name', "%{$searchTerm}%")->orWhereLike('last_name', "%{$searchTerm}%"));
                 });
             })
-            ->with(['subject', 'teacher', 'schoolGroup.shift', 'workshopStudents'])
+            ->with(['subject', 'teacher', 'schoolGroup.shift', 'workshopStudents', 'schedules'])
             ->orderBy('is_workshop')
             ->orderBy('created_at', 'desc')
             ->paginate(12);
@@ -345,11 +452,13 @@ class Index extends Component
                 ->get()
             : collect();
 
-        $allStudents = Student::where('school_id', $this->school->id)
-            ->where('status', 'ACTIVO')
-            ->with('currentEnrollment.schoolGroup')
-            ->orderBy('last_name')
-            ->get();
+        $allStudents = $this->showWorkshopStudentsModal
+            ? Student::where('school_id', $this->school->id)
+                ->where('status', 'ACTIVO')
+                ->with('currentEnrollment.schoolGroup')
+                ->orderBy('last_name')
+                ->get()
+            : collect();
 
         return view('livewire.school.classes.index', [
             'classes' => $classes,

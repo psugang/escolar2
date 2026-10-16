@@ -13,7 +13,10 @@ use App\Models\StudentGuardian;
 use Flux\Flux;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Livewire\WithFileUploads;
@@ -25,6 +28,7 @@ class Index extends Component
 {
     use WithFileUploads, WithPagination;
 
+    #[Locked]
     public School $school;
 
     // Filters
@@ -113,8 +117,21 @@ class Index extends Component
 
     public int $importedCount = 0;
 
+    public string $importStep = 'upload'; // 'upload' | 'preview'
+
+    /** @var array<int, array<string, mixed>> */
+    public array $previewReEnrollments = [];
+
+    /** @var array<int, array<string, mixed>> */
+    public array $previewNewStudents = [];
+
+    /** @var array<int, string> */
+    public array $previewErrors = [];
+
     public function mount(School $school): void
     {
+        abort_if(auth()->user()?->isTeacherOnly($school), 403);
+
         $this->school = $school;
 
         $activeYear = $this->school->schoolYears()
@@ -190,7 +207,7 @@ class Index extends Component
             'newStartsOn.required' => 'La fecha de inicio de inscripción es obligatoria.',
         ]);
 
-        $group = SchoolGroup::with(['schoolYear', 'shift'])->findOrFail($this->newGroupId);
+        $group = $this->school->schoolGroups()->with(['schoolYear', 'shift'])->findOrFail($this->newGroupId);
 
         $student = Student::create([
             'school_id' => $this->school->id,
@@ -230,7 +247,7 @@ class Index extends Component
     public function openChangeGroupModal(string $studentId): void
     {
         $this->changeStudentId = $studentId;
-        $this->changeStudent = Student::with(['currentEnrollment.schoolGroup.shift'])->findOrFail($studentId);
+        $this->changeStudent = $this->school->students()->with(['currentEnrollment.schoolGroup.shift'])->findOrFail($studentId);
         $this->changeGroupId = '';
         $this->changeStartsOn = today()->format('Y-m-d');
         $this->resetValidation();
@@ -247,8 +264,8 @@ class Index extends Component
             'changeStartsOn.required' => 'La fecha del cambio es obligatoria.',
         ]);
 
-        $student = Student::with('currentEnrollment')->findOrFail($this->changeStudentId);
-        $newGroup = SchoolGroup::with(['schoolYear', 'shift'])->findOrFail($this->changeGroupId);
+        $student = $this->school->students()->with('currentEnrollment')->findOrFail($this->changeStudentId);
+        $newGroup = $this->school->schoolGroups()->with(['schoolYear', 'shift'])->findOrFail($this->changeGroupId);
 
         // Close previous enrollment
         if ($student->currentEnrollment) {
@@ -287,7 +304,7 @@ class Index extends Component
     public function openGuardiansModal(string $studentId): void
     {
         $this->guardiansStudentId = $studentId;
-        $this->guardiansStudent = Student::with('guardians')->findOrFail($studentId);
+        $this->guardiansStudent = $this->school->students()->with('guardians')->findOrFail($studentId);
         $this->reset([
             'guardianFirstName',
             'guardianLastName',
@@ -303,7 +320,7 @@ class Index extends Component
 
     public function addGuardian(): void
     {
-        $student = Student::with('guardians')->findOrFail($this->guardiansStudentId);
+        $student = $this->school->students()->with('guardians')->findOrFail($this->guardiansStudentId);
 
         if ($student->guardians->count() >= 2) {
             $this->addError('guardianRelationship', 'Un alumno sólo puede tener hasta 2 tutores asignados.');
@@ -375,7 +392,7 @@ class Index extends Component
             ->where('guardian_id', $guardianId)
             ->delete();
 
-        $this->guardiansStudent = Student::with('guardians')->findOrFail($this->guardiansStudentId);
+        $this->guardiansStudent = $this->school->students()->with('guardians')->findOrFail($this->guardiansStudentId);
 
         AuditLog::record(
             action: 'TUTOR_DESVINCULADO',
@@ -389,7 +406,7 @@ class Index extends Component
 
     public function openBajaModal(string $studentId): void
     {
-        $student = Student::findOrFail($studentId);
+        $student = $this->school->students()->findOrFail($studentId);
         $this->bajaStudentId = $student->id;
         $this->bajaStudentName = $student->full_name;
         $this->showBajaModal = true;
@@ -397,7 +414,7 @@ class Index extends Component
 
     public function processBaja(): void
     {
-        $student = Student::findOrFail($this->bajaStudentId);
+        $student = $this->school->students()->findOrFail($this->bajaStudentId);
         $student->markAsBaja();
 
         AuditLog::record(
@@ -415,7 +432,7 @@ class Index extends Component
 
     public function openHistoryModal(string $studentId): void
     {
-        $this->historyStudent = Student::with([
+        $this->historyStudent = $this->school->students()->with([
             'enrollments.schoolYear',
             'enrollments.schoolGroup.shift',
         ])->findOrFail($studentId);
@@ -449,10 +466,10 @@ class Index extends Component
             }
 
             fwrite($handle, "\xEF\xBB\xBF");
-            fputcsv($handle, ['grado', 'grupo', 'apellido_paterno', 'apellido_materno', 'nombre']);
-            fputcsv($handle, ['1', 'A', 'García', 'López', 'Juan Carlos']);
-            fputcsv($handle, ['2', 'B', 'Hernández', 'Martínez', 'Ana Sofía']);
-            fputcsv($handle, ['3', 'A', 'Rodríguez', 'Pérez', 'Luis Fernando']);
+            fputcsv($handle, ['grado', 'grupo', 'apellido_paterno', 'apellido_materno', 'nombre', 'curp', 'tutor_nombre', 'tutor_correo', 'tutor_telefono']);
+            fputcsv($handle, ['1', 'A', 'García', 'López', 'Juan Carlos', 'GALJ010101HDFRRA01', 'Roberto García', 'roberto.garcia@ejemplo.com', '5511223344']);
+            fputcsv($handle, ['2', 'B', 'Hernández', 'Martínez', 'Ana Sofía', 'HEMA020202MDFRRA02', 'Laura Martínez', 'laura.mtz@ejemplo.com', '5522334455']);
+            fputcsv($handle, ['3', 'A', 'Rodríguez', 'Pérez', 'Luis Fernando', 'ROPL030303HDFRRA03', 'Carmen Pérez', 'carmen.perez@ejemplo.com', '5533445566']);
 
             fclose($handle);
         }, 'plantilla_alumnos.csv', [
@@ -460,7 +477,7 @@ class Index extends Component
         ]);
     }
 
-    public function importCsv(): void
+    public function previewImportCsv(): void
     {
         $this->validate([
             'importYearId' => ['required', 'exists:school_years,id'],
@@ -477,9 +494,6 @@ class Index extends Component
         if (! $this->importFile) {
             return;
         }
-
-        $schoolYear = $this->school->schoolYears()->findOrFail($this->importYearId);
-        $shift = Shift::findOrFail($this->importShiftId);
 
         $path = $this->importFile->getRealPath();
         $handle = fopen($path, 'r');
@@ -520,6 +534,14 @@ class Index extends Component
                 $columnMap['apellido_materno'] = $index;
             } elseif (in_array($col, ['nombre', 'nombres', 'primer_nombre'], true)) {
                 $columnMap['nombre'] = $index;
+            } elseif (in_array($col, ['curp', 'clave_curp'], true)) {
+                $columnMap['curp'] = $index;
+            } elseif (in_array($col, ['tutor_nombre', 'nombre_tutor', 'tutor'], true)) {
+                $columnMap['tutor_nombre'] = $index;
+            } elseif (in_array($col, ['tutor_correo', 'correo_tutor', 'email_tutor', 'tutor_email'], true)) {
+                $columnMap['tutor_correo'] = $index;
+            } elseif (in_array($col, ['tutor_telefono', 'telefono_tutor', 'celular_tutor'], true)) {
+                $columnMap['tutor_telefono'] = $index;
             }
         }
 
@@ -530,9 +552,26 @@ class Index extends Component
             return;
         }
 
+        // Load existing active students of the school for $O(1)$ in-memory matching
+        $existingStudents = Student::where('school_id', $this->school->id)
+            ->with(['currentEnrollment.schoolGroup.shift'])
+            ->get();
+
+        $curpMap = [];
+        $nameMap = [];
+
+        foreach ($existingStudents as $stu) {
+            if (! empty($stu->curp)) {
+                $curpMap[strtoupper(trim($stu->curp))] = $stu;
+            }
+            $normalizedName = Str::upper(Str::ascii(trim($stu->first_name.' '.$stu->last_name)));
+            $nameMap[$normalizedName] = $stu;
+        }
+
         $rowNumber = 1;
-        $imported = 0;
-        $errors = [];
+        $this->previewReEnrollments = [];
+        $this->previewNewStudents = [];
+        $this->previewErrors = [];
 
         while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
             $rowNumber++;
@@ -546,62 +585,279 @@ class Index extends Component
             $paterno = isset($row[$columnMap['apellido_paterno']]) ? trim((string) $row[$columnMap['apellido_paterno']]) : '';
             $materno = isset($columnMap['apellido_materno'], $row[$columnMap['apellido_materno']]) ? trim((string) $row[$columnMap['apellido_materno']]) : '';
             $nombre = isset($row[$columnMap['nombre']]) ? trim((string) $row[$columnMap['nombre']]) : '';
+            $curp = isset($columnMap['curp'], $row[$columnMap['curp']]) ? strtoupper(trim((string) $row[$columnMap['curp']])) : null;
+            $tutorNombre = isset($columnMap['tutor_nombre'], $row[$columnMap['tutor_nombre']]) ? trim((string) $row[$columnMap['tutor_nombre']]) : null;
+            $tutorCorreo = isset($columnMap['tutor_correo'], $row[$columnMap['tutor_correo']]) ? strtolower(trim((string) $row[$columnMap['tutor_correo']])) : null;
+            $tutorTelefono = isset($columnMap['tutor_telefono'], $row[$columnMap['tutor_telefono']]) ? trim((string) $row[$columnMap['tutor_telefono']]) : null;
 
             if (! in_array($grado, [1, 2, 3], true) || empty($grupo) || empty($paterno) || empty($nombre)) {
-                $errors[] = "Fila {$rowNumber}: Datos incompletos o grado inválido ({$grado}° '{$grupo}' - {$nombre} {$paterno}).";
+                $this->previewErrors[] = "Fila {$rowNumber}: Datos incompletos o grado inválido ({$grado}° '{$grupo}' - {$nombre} {$paterno}).";
 
                 continue;
             }
 
-            $group = SchoolGroup::firstOrCreate([
-                'school_year_id' => $schoolYear->id,
-                'grade' => $grado,
-                'section' => $grupo,
-            ], [
-                'shift_id' => $shift->id,
-            ]);
-
             $lastName = trim("{$paterno} {$materno}");
+            $normalizedRowName = Str::upper(Str::ascii(trim("{$nombre} {$lastName}")));
 
-            $student = Student::create([
-                'school_id' => $this->school->id,
-                'first_name' => $nombre,
-                'last_name' => $lastName,
-                'status' => 'ACTIVO',
-            ]);
+            // Match priority: by CURP, then by normalized full name
+            $matchedStudent = null;
+            if ($curp && isset($curpMap[$curp])) {
+                $matchedStudent = $curpMap[$curp];
+            } elseif (isset($nameMap[$normalizedRowName])) {
+                $matchedStudent = $nameMap[$normalizedRowName];
+            }
 
-            StudentEnrollment::create([
-                'student_id' => $student->id,
-                'school_year_id' => $schoolYear->id,
-                'shift_id' => $group->shift_id,
-                'school_group_id' => $group->id,
-                'grade' => $group->grade,
-                'starts_on' => $schoolYear->starts_on ?? today(),
-                'status' => 'ACTIVO',
-            ]);
+            if ($matchedStudent) {
+                $currentGroup = $matchedStudent->currentEnrollment?->schoolGroup
+                    ? $matchedStudent->currentEnrollment->schoolGroup->name_with_shift
+                    : 'Sin grupo previo';
 
-            $imported++;
+                $this->previewReEnrollments[] = [
+                    'student_id' => $matchedStudent->id,
+                    'name' => $matchedStudent->full_name,
+                    'first_name' => $nombre,
+                    'last_name' => $lastName,
+                    'curp' => $curp ?: $matchedStudent->curp,
+                    'current_group' => $currentGroup,
+                    'target_grade' => $grado,
+                    'target_section' => $grupo,
+                    'tutor_nombre' => $tutorNombre ?: null,
+                    'tutor_correo' => $tutorCorreo ?: null,
+                    'tutor_telefono' => $tutorTelefono ?: null,
+                ];
+            } else {
+                $this->previewNewStudents[] = [
+                    'name' => "{$nombre} {$lastName}",
+                    'first_name' => $nombre,
+                    'last_name' => $lastName,
+                    'curp' => $curp,
+                    'target_grade' => $grado,
+                    'target_section' => $grupo,
+                    'tutor_nombre' => $tutorNombre ?: null,
+                    'tutor_correo' => $tutorCorreo ?: null,
+                    'tutor_telefono' => $tutorTelefono ?: null,
+                ];
+            }
         }
 
         fclose($handle);
 
-        $this->importedCount = $imported;
-        $this->importErrors = $errors;
+        $this->importErrors = $this->previewErrors;
+        $this->importStep = 'preview';
+    }
 
-        if ($imported > 0) {
-            AuditLog::record(
-                action: 'IMPORTACION_MASIVA_ALUMNOS',
-                description: "Importación masiva: se registraron {$imported} alumnos desde archivo CSV.",
-                school: $this->school,
-                newValues: ['total_importados' => $imported, 'ciclo' => $schoolYear->name]
-            );
+    public function confirmImport(): void
+    {
+        if (empty($this->previewReEnrollments) && empty($this->previewNewStudents)) {
+            $this->showImportModal = false;
 
-            Flux::toast(variant: 'success', text: "Se importaron exitosamente {$imported} alumnos.");
+            return;
         }
 
-        if (empty($errors)) {
-            $this->showImportModal = false;
-            $this->reset(['importFile', 'importErrors']);
+        $schoolYear = $this->school->schoolYears()->findOrFail($this->importYearId);
+        $shift = Shift::findOrFail($this->importShiftId);
+
+        $reCount = 0;
+        $newCount = 0;
+
+        DB::transaction(function () use ($schoolYear, $shift, &$reCount, &$newCount) {
+            $groupCache = [];
+
+            // 1. Process Re-Enrollments (Preserving Student and Guardians)
+            foreach ($this->previewReEnrollments as $item) {
+                $cacheKey = "{$item['target_grade']}_{$item['target_section']}";
+                if (! isset($groupCache[$cacheKey])) {
+                    $groupCache[$cacheKey] = SchoolGroup::firstOrCreate([
+                        'school_year_id' => $schoolYear->id,
+                        'grade' => $item['target_grade'],
+                        'section' => $item['target_section'],
+                    ], [
+                        'shift_id' => $shift->id,
+                    ]);
+                }
+                $group = $groupCache[$cacheKey];
+
+                $student = Student::where('id', $item['student_id'])->first();
+                if (! $student) {
+                    continue;
+                }
+
+                // Close previous active enrollment if open
+                if ($student->currentEnrollment) {
+                    $student->currentEnrollment->update([
+                        'ends_on' => $schoolYear->starts_on ?? today(),
+                        'status' => 'COMPLETADO',
+                    ]);
+                }
+
+                // If CURP provided and student had none, update curp
+                if (! empty($item['curp']) && empty($student->curp)) {
+                    $student->update(['curp' => $item['curp']]);
+                }
+
+                // Create new enrollment for target cycle and group
+                StudentEnrollment::create([
+                    'student_id' => $student->id,
+                    'school_year_id' => $schoolYear->id,
+                    'shift_id' => $group->shift_id,
+                    'school_group_id' => $group->id,
+                    'grade' => $group->grade,
+                    'starts_on' => $schoolYear->starts_on ?? today(),
+                    'ends_on' => null,
+                    'status' => 'ACTIVO',
+                ]);
+
+                $this->syncCsvGuardian($student, $item);
+
+                $reCount++;
+            }
+
+            // 2. Process New Students
+            foreach ($this->previewNewStudents as $item) {
+                $cacheKey = "{$item['target_grade']}_{$item['target_section']}";
+                if (! isset($groupCache[$cacheKey])) {
+                    $groupCache[$cacheKey] = SchoolGroup::firstOrCreate([
+                        'school_year_id' => $schoolYear->id,
+                        'grade' => $item['target_grade'],
+                        'section' => $item['target_section'],
+                    ], [
+                        'shift_id' => $shift->id,
+                    ]);
+                }
+                $group = $groupCache[$cacheKey];
+
+                $student = Student::create([
+                    'school_id' => $this->school->id,
+                    'first_name' => $item['first_name'],
+                    'last_name' => $item['last_name'],
+                    'curp' => $item['curp'] ?: null,
+                    'status' => 'ACTIVO',
+                ]);
+
+                StudentEnrollment::create([
+                    'student_id' => $student->id,
+                    'school_year_id' => $schoolYear->id,
+                    'shift_id' => $group->shift_id,
+                    'school_group_id' => $group->id,
+                    'grade' => $group->grade,
+                    'starts_on' => $schoolYear->starts_on ?? today(),
+                    'ends_on' => null,
+                    'status' => 'ACTIVO',
+                ]);
+
+                $this->syncCsvGuardian($student, $item);
+
+                $newCount++;
+            }
+        });
+
+        $totalImported = $reCount + $newCount;
+        $this->importedCount = $totalImported;
+
+        if ($totalImported > 0) {
+            AuditLog::record(
+                action: 'IMPORTACION_MASIVA_ALUMNOS',
+                description: "Importación masiva: {$reCount} re-inscripciones y {$newCount} nuevos alumnos en ciclo {$schoolYear->name}.",
+                school: $this->school,
+                newValues: [
+                    'total_importados' => $totalImported,
+                    'reinscripciones' => $reCount,
+                    'nuevos' => $newCount,
+                    'ciclo' => $schoolYear->name,
+                ]
+            );
+
+            Flux::toast(variant: 'success', text: "Importación exitosa: {$reCount} re-inscripciones y {$newCount} nuevos alumnos.");
+        }
+
+        $this->showImportModal = false;
+        $this->reset(['importFile', 'importErrors', 'previewReEnrollments', 'previewNewStudents', 'previewErrors', 'importStep']);
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     */
+    protected function syncCsvGuardian(Student $student, array $item): void
+    {
+        $tutorNombre = isset($item['tutor_nombre']) ? trim((string) $item['tutor_nombre']) : '';
+        if ($tutorNombre === '') {
+            return;
+        }
+
+        $tutorCorreo = ! empty($item['tutor_correo']) ? strtolower(trim((string) $item['tutor_correo'])) : null;
+        $tutorTelefono = ! empty($item['tutor_telefono']) ? trim((string) $item['tutor_telefono']) : null;
+
+        $normalizedTargetName = Str::upper(Str::ascii($tutorNombre));
+
+        $existingGuardians = $student->guardians()->get();
+
+        foreach ($existingGuardians as $existingGuardian) {
+            $emailMatches = $tutorCorreo && strtolower((string) $existingGuardian->email) === $tutorCorreo;
+            $nameMatches = Str::upper(Str::ascii(trim($existingGuardian->full_name))) === $normalizedTargetName;
+
+            if ($emailMatches || $nameMatches) {
+                $updates = [];
+                if ($tutorCorreo && empty($existingGuardian->email)) {
+                    $updates['email'] = $tutorCorreo;
+                }
+                if ($tutorTelefono && empty($existingGuardian->phone)) {
+                    $updates['phone'] = $tutorTelefono;
+                }
+                if (! empty($updates)) {
+                    $existingGuardian->update($updates);
+                }
+
+                return;
+            }
+        }
+
+        if ($existingGuardians->count() >= 2) {
+            return;
+        }
+
+        $parts = preg_split('/\s+/', $tutorNombre) ?: [$tutorNombre];
+        if (count($parts) === 1) {
+            $firstName = $parts[0];
+            $lastName = '';
+        } elseif (count($parts) === 2) {
+            $firstName = $parts[0];
+            $lastName = $parts[1];
+        } else {
+            $lastName = implode(' ', array_slice($parts, -2));
+            $firstName = implode(' ', array_slice($parts, 0, -2));
+        }
+
+        $guardian = null;
+        if ($tutorCorreo) {
+            $guardian = Guardian::where('school_id', $this->school->id)
+                ->where('email', $tutorCorreo)
+                ->first();
+        }
+
+        if (! $guardian) {
+            $guardian = Guardian::create([
+                'school_id' => $this->school->id,
+                'first_name' => $firstName,
+                'last_name' => $lastName,
+                'email' => $tutorCorreo,
+                'phone' => $tutorTelefono,
+            ]);
+        }
+
+        StudentGuardian::firstOrCreate([
+            'student_id' => $student->id,
+            'guardian_id' => $guardian->id,
+        ], [
+            'relationship' => 'Tutor',
+        ]);
+    }
+
+    public function importCsv(): void
+    {
+        $this->previewImportCsv();
+
+        if (empty($this->importErrors)) {
+            $this->confirmImport();
         }
     }
 

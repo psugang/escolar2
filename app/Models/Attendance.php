@@ -30,8 +30,19 @@ class Attendance extends Model
         'class_session_id',
         'student_id',
         'status',
+        'absence_notified_at',
         'recorded_by_user_id',
     ];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'absence_notified_at' => 'datetime',
+        ];
+    }
 
     /**
      * @return BelongsTo<ClassSession, $this>

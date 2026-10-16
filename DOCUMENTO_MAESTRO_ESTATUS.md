@@ -1,8 +1,8 @@
-# Sistema Web de Control Escolar — Documento Maestro, Capacidades y Estatus de Desarrollo
+# Sistema Web de Control Escolar — Documento Maestro, Capacidades y Estatus de Desarrollo (Baseline v2.0)
 
-> **Fecha de actualización:** 13 de Octubre de 2026  
+> **Fecha de actualización:** 15 de Octubre de 2026  
 > **Ubicación del proyecto:** `/home/aaron/Sistema-escolar/escolar`  
-> **Estatus general de calidad:** 83 pruebas automatizadas en Pest (81 aprobadas, 2 omitidas de registro Fortify), 0 errores en PHPStan Nivel 7 (Larastan estricto), Laravel Pint 100% compliant. Base de datos PostgreSQL 17 migrada y sincronizada.
+> **Estatus general de calidad:** 100 pruebas automatizadas en Pest (360 aserciones, 0 fallos), 0 errores en PHPStan Nivel 7 (Larastan estricto), Laravel Pint 100% compliant. Ver detalle integral en `AUDITORIA_PROYECTO_SISTEMA_ESCOLAR.md`.
 
 ---
 

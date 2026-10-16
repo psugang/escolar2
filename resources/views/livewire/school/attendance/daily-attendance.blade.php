@@ -86,34 +86,40 @@
                     @php $currentState = $attendanceStates[$student->id] ?? 'PRESENTE'; @endphp
                     <div class="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-zinc-50/50 dark:hover:bg-zinc-800/40 transition-colors">
                         <div>
-                            <div class="font-medium text-sm text-zinc-900 dark:text-zinc-100">
-                                {{ $student->full_name }}
+                            <div class="font-medium text-sm text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                                <span>{{ $student->full_name }}</span>
+                                @if (isset($notifiedStudentIds[$student->id]))
+                                    <flux:badge size="xs" color="zinc" icon="envelope">Notificado</flux:badge>
+                                @endif
                             </div>
                             <div class="text-xs text-zinc-400 font-mono">
                                 {{ $student->student_id_number ?? $student->curp ?? 'Sin matrícula' }}
                             </div>
                         </div>
 
-                        <!-- Selector Rápido de Estado -->
-                        <div class="inline-flex rounded-lg border border-zinc-200 dark:border-zinc-700 p-0.5 bg-zinc-100 dark:bg-zinc-800 text-xs">
+                        <!-- Selector Rápido de Estado Mobile-First -->
+                        <div x-data="{ state: @entangle('attendanceStates.' . $student->id) }" class="grid grid-cols-3 sm:inline-flex rounded-xl border border-zinc-200 dark:border-zinc-700 p-1 bg-zinc-100 dark:bg-zinc-800 w-full sm:w-auto gap-1">
                             <button
                                 type="button"
-                                wire:click="$set('attendanceStates.{{ $student->id }}', 'PRESENTE')"
-                                class="px-3 py-1.5 rounded-md font-semibold transition-all {{ $currentState === 'PRESENTE' ? 'bg-emerald-600 text-white shadow-xs' : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900' }}"
+                                x-on:click="state = 'PRESENTE'"
+                                :class="state === 'PRESENTE' ? 'bg-emerald-600 text-white shadow-xs font-bold' : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'"
+                                class="min-h-[44px] px-3.5 py-2 text-sm font-medium rounded-lg transition-all text-center flex items-center justify-center cursor-pointer"
                             >
                                 Presente
                             </button>
                             <button
                                 type="button"
-                                wire:click="$set('attendanceStates.{{ $student->id }}', 'AUSENTE')"
-                                class="px-3 py-1.5 rounded-md font-semibold transition-all {{ $currentState === 'AUSENTE' ? 'bg-red-600 text-white shadow-xs' : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900' }}"
+                                x-on:click="state = 'AUSENTE'"
+                                :class="state === 'AUSENTE' ? 'bg-red-600 text-white shadow-xs font-bold' : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'"
+                                class="min-h-[44px] px-3.5 py-2 text-sm font-medium rounded-lg transition-all text-center flex items-center justify-center cursor-pointer"
                             >
                                 Ausente
                             </button>
                             <button
                                 type="button"
-                                wire:click="$set('attendanceStates.{{ $student->id }}', 'RETARDO')"
-                                class="px-3 py-1.5 rounded-md font-semibold transition-all {{ $currentState === 'RETARDO' ? 'bg-amber-600 text-white shadow-xs' : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900' }}"
+                                x-on:click="state = 'RETARDO'"
+                                :class="state === 'RETARDO' ? 'bg-amber-600 text-white shadow-xs font-bold' : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'"
+                                class="min-h-[44px] px-3.5 py-2 text-sm font-medium rounded-lg transition-all text-center flex items-center justify-center cursor-pointer"
                             >
                                 Retardo
                             </button>
@@ -246,7 +252,12 @@
                         @foreach ($students as $stu)
                             @if (($attendanceStates[$stu->id] ?? null) === 'AUSENTE')
                                 <div class="py-1 px-1 flex items-center justify-between">
-                                    <span class="font-medium text-zinc-900 dark:text-zinc-100">{{ $stu->full_name }}</span>
+                                    <div class="flex items-center gap-2">
+                                        <span class="font-medium text-zinc-900 dark:text-zinc-100">{{ $stu->full_name }}</span>
+                                        @if (isset($notifiedStudentIds[$stu->id]))
+                                            <flux:badge size="xs" color="zinc" icon="envelope">Notificado</flux:badge>
+                                        @endif
+                                    </div>
                                     <span class="text-zinc-500">
                                         {{ $stu->guardians->count() }} tutor(es)
                                     </span>

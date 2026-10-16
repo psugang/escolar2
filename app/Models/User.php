@@ -106,4 +106,34 @@ class User extends Authenticatable implements MustVerifyEmail
             })
             ->exists();
     }
+
+    public function isTeacherOnly(School $school): bool
+    {
+        if ($this->isGlobalAdmin()) {
+            return false;
+        }
+
+        $membership = $this->schoolMemberships()
+            ->where('school_id', $school->getKey())
+            ->with('roles')
+            ->first();
+
+        if (! $membership) {
+            return false;
+        }
+
+        $roles = $membership->roles->pluck('role');
+
+        $adminRoles = [
+            SchoolRole::ADMIN_ESCOLAR->value,
+            SchoolRole::DIRECTOR->value,
+            SchoolRole::CONTROL_ESCOLAR->value,
+        ];
+
+        if ($roles->intersect($adminRoles)->isNotEmpty()) {
+            return false;
+        }
+
+        return $roles->contains(SchoolRole::PROFESOR->value);
+    }
 }

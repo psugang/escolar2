@@ -13,20 +13,25 @@ use Flux\Flux;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 #[Title('Pase de Asistencia')]
 class DailyAttendance extends Component
 {
+    #[Locked]
     public School $school;
 
     public string $selectedDate = '';
 
     // Active session for attendance taking
+    #[Locked]
     public ?string $activeSessionId = null;
 
+    #[Locked]
     public ?ClassSession $activeSession = null;
 
     /**
@@ -45,18 +50,31 @@ class DailyAttendance extends Component
     {
         $this->school = $school;
         $this->selectedDate = today()->format('Y-m-d');
+
+        $sessionParam = request()->query('session');
+        if (is_string($sessionParam) && $sessionParam !== '') {
+            $this->selectSession($sessionParam);
+        }
     }
 
     public function selectSession(string $sessionId): void
     {
-        $session = ClassSession::with([
-            'schoolClass.subject',
-            'schoolClass.schoolGroup.shift',
-            'schoolClass.workshopStudents',
-            'originalTeacher',
-            'substituteTeacher',
-            'attendances',
-        ])->findOrFail($sessionId);
+        $session = ClassSession::whereHas('schoolClass', fn ($q) => $q->where('school_id', $this->school->id))
+            ->with([
+                'schoolClass.subject',
+                'schoolClass.schoolGroup.shift',
+                'schoolClass.workshopStudents.guardians',
+                'originalTeacher',
+                'substituteTeacher',
+                'attendances',
+            ])->findOrFail($sessionId);
+
+        $user = Auth::user();
+        if ($user && $user->isTeacherOnly($this->school)) {
+            $teacher = Teacher::where('user_id', $user->id)->first();
+            $isAssigned = $teacher && ($session->original_teacher_id === $teacher->id || $session->substitute_teacher_id === $teacher->id);
+            abort_unless($isAssigned, 403);
+        }
 
         // Disallow future session attendance taking (Section 27 rule)
         if ($session->date->isFuture()) {
@@ -93,6 +111,16 @@ class DailyAttendance extends Component
 
     public function openConfirmModal(): void
     {
+        $absentCount = collect($this->attendanceStates)
+            ->filter(fn ($s) => $s === 'AUSENTE')
+            ->count();
+
+        if ($absentCount === 0) {
+            $this->saveAttendance();
+
+            return;
+        }
+
         $this->showConfirmModal = true;
     }
 
@@ -104,27 +132,30 @@ class DailyAttendance extends Component
 
         $user = Auth::user();
 
-        foreach ($this->attendanceStates as $studentId => $status) {
-            $attendance = Attendance::where('class_session_id', $this->activeSession->id)
-                ->where('student_id', $studentId)
-                ->first();
+        DB::transaction(function () use ($user) {
+            $existing = Attendance::where('class_session_id', $this->activeSession->id)
+                ->get()
+                ->keyBy('student_id');
 
-            if ($attendance) {
-                // If modified, record log
-                if ($user) {
-                    $attendance->updateStatusWithLog($status, $user, 'Actualización en lista');
+            foreach ($this->attendanceStates as $studentId => $status) {
+                $attendance = $existing->get($studentId);
+
+                if ($attendance) {
+                    if ($user && $attendance->status !== $status) {
+                        $attendance->updateStatusWithLog($status, $user, 'Actualización en lista');
+                    }
+                } else {
+                    Attendance::create([
+                        'class_session_id' => $this->activeSession->id,
+                        'student_id' => $studentId,
+                        'status' => $status,
+                        'recorded_by_user_id' => $user?->id,
+                    ]);
                 }
-            } else {
-                Attendance::create([
-                    'class_session_id' => $this->activeSession->id,
-                    'student_id' => $studentId,
-                    'status' => $status,
-                    'recorded_by_user_id' => $user?->id,
-                ]);
             }
-        }
 
-        $this->activeSession->update(['status' => 'COMPLETADA']);
+            $this->activeSession->update(['status' => 'COMPLETADA']);
+        });
 
         $absentStudentIds = collect($this->attendanceStates)
             ->filter(fn ($s) => $s === 'AUSENTE')
@@ -146,12 +177,21 @@ class DailyAttendance extends Component
 
         // Notify guardians if enabled (Section 14)
         if ($this->sendGuardianNotifications && $absentStudentIds->isNotEmpty()) {
-            $absentStudents = Student::with('guardians')->whereIn('id', $absentStudentIds)->get();
+            $attendancesToNotify = Attendance::where('class_session_id', $this->activeSession->id)
+                ->where('status', 'AUSENTE')
+                ->whereNull('absence_notified_at')
+                ->with('student.guardians')
+                ->get();
 
-            foreach ($absentStudents as $absentStudent) {
+            foreach ($attendancesToNotify as $attendance) {
+                $absentStudent = $attendance->student;
+                if (! $absentStudent) {
+                    continue;
+                }
+
                 foreach ($absentStudent->guardians as $guardian) {
                     if (! empty($guardian->email)) {
-                        Mail::to($guardian->email)->send(
+                        Mail::to($guardian->email)->queue(
                             new StudentAbsenceNotificationMail(
                                 student: $absentStudent,
                                 guardian: $guardian,
@@ -169,6 +209,8 @@ class DailyAttendance extends Component
                         );
                     }
                 }
+
+                $attendance->update(['absence_notified_at' => now()]);
             }
         }
 
@@ -206,15 +248,20 @@ class DailyAttendance extends Component
     public function render(): View
     {
         $user = Auth::user();
-        $isGlobalOrAdmin = $user && ($user->isGlobalAdmin() || $user->hasSchoolRole($this->school, 'ADMIN_ESCOLAR') || $user->hasSchoolRole($this->school, 'DIRECTOR'));
+        $isTeacherOnly = $user && $user->isTeacherOnly($this->school);
 
         // Find teacher profile for current user if applicable
-        $teacher = Teacher::where('user_id', $user?->id)->first();
+        $teacher = $user ? Teacher::where('user_id', $user->id)->first() : null;
 
         $sessions = ClassSession::query()
             ->whereHas('schoolClass', fn ($q) => $q->where('school_id', $this->school->id))
-            ->where('date', $this->selectedDate)
-            ->when(! $isGlobalOrAdmin && $teacher, function ($q) use ($teacher) {
+            ->whereDate('date', $this->selectedDate)
+            ->when($isTeacherOnly, function ($q) use ($teacher) {
+                if (! $teacher) {
+                    $q->whereRaw('1 = 0');
+
+                    return;
+                }
                 $q->where(function ($sub) use ($teacher) {
                     $sub->where('original_teacher_id', $teacher->id)
                         ->orWhere('substitute_teacher_id', $teacher->id);
@@ -236,12 +283,22 @@ class DailyAttendance extends Component
 
         $students = $this->activeSession ? $this->getSessionStudents($this->activeSession) : collect();
 
+        /** @var array<string, int> $notifiedStudentIds */
+        $notifiedStudentIds = $this->activeSession
+            ? $this->activeSession->attendances
+                ->whereNotNull('absence_notified_at')
+                ->pluck('student_id')
+                ->flip()
+                ->all()
+            : [];
+
         return view('livewire.school.attendance.daily-attendance', [
             'sessions' => $sessions,
             'students' => $students,
             'absentCount' => $absentCount,
             'presentCount' => $presentCount,
             'retardoCount' => $retardoCount,
+            'notifiedStudentIds' => $notifiedStudentIds,
         ]);
     }
 }

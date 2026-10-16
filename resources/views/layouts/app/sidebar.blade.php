@@ -35,34 +35,46 @@
                         @endif
                     </div>
 
+                    @php
+                        $user = auth()->user();
+                        $isTeacherOnly = $user && $user->isTeacherOnly($activeSchool);
+                    @endphp
+
                     <flux:sidebar.group heading="Gestión Escolar" class="grid gap-0.5">
                         <flux:sidebar.item icon="chart-bar" :href="route('school.dashboard', $activeSchool)" :current="request()->routeIs('school.dashboard')" wire:navigate>
-                            Panel de Escuela
+                            {{ $isTeacherOnly ? 'Mis Clases e Inicio' : 'Panel de Escuela' }}
                         </flux:sidebar.item>
-                        <flux:sidebar.item icon="calendar" :href="route('school.years.index', $activeSchool)" :current="request()->routeIs('school.years.*')" wire:navigate>
-                            Ciclos y Grupos
-                        </flux:sidebar.item>
-                        <flux:sidebar.item icon="academic-cap" :href="route('school.students.index', $activeSchool)" :current="request()->routeIs('school.students.*')" wire:navigate>
-                            Alumnos
-                        </flux:sidebar.item>
-                        <flux:sidebar.item icon="users" :href="route('school.teachers.index', $activeSchool)" :current="request()->routeIs('school.teachers.*')" wire:navigate>
-                            Profesores
-                        </flux:sidebar.item>
-                        <flux:sidebar.item icon="book-open" :href="route('school.classes.index', $activeSchool)" :current="request()->routeIs('school.classes.*')" wire:navigate>
-                            Clases y Talleres
-                        </flux:sidebar.item>
+
+                        @if (! $isTeacherOnly)
+                            <flux:sidebar.item icon="calendar" :href="route('school.years.index', $activeSchool)" :current="request()->routeIs('school.years.*')" wire:navigate>
+                                Ciclos y Grupos
+                            </flux:sidebar.item>
+                            <flux:sidebar.item icon="academic-cap" :href="route('school.students.index', $activeSchool)" :current="request()->routeIs('school.students.*')" wire:navigate>
+                                Alumnos
+                            </flux:sidebar.item>
+                            <flux:sidebar.item icon="users" :href="route('school.teachers.index', $activeSchool)" :current="request()->routeIs('school.teachers.*')" wire:navigate>
+                                Profesores
+                            </flux:sidebar.item>
+                            <flux:sidebar.item icon="book-open" :href="route('school.classes.index', $activeSchool)" :current="request()->routeIs('school.classes.*')" wire:navigate>
+                                Clases y Talleres
+                            </flux:sidebar.item>
+                        @endif
+
                         <flux:sidebar.item icon="clipboard-document-check" :href="route('school.attendance.daily', $activeSchool)" :current="request()->routeIs('school.attendance.*') && !request()->routeIs('school.attendance.justifications')" wire:navigate>
                             Pase de Asistencia
                         </flux:sidebar.item>
                         <flux:sidebar.item icon="document-text" :href="route('school.attendance.justifications', $activeSchool)" :current="request()->routeIs('school.attendance.justifications')" wire:navigate>
                             Justificantes
                         </flux:sidebar.item>
-                        <flux:sidebar.item icon="chart-pie" :href="route('school.reports.index', $activeSchool)" :current="request()->routeIs('school.reports.*')" wire:navigate>
-                            Reportes
-                        </flux:sidebar.item>
-                        <flux:sidebar.item icon="shield-check" :href="route('school.audit.index', $activeSchool)" :current="request()->routeIs('school.audit.*')" wire:navigate>
-                            Auditoría
-                        </flux:sidebar.item>
+
+                        @if (! $isTeacherOnly)
+                            <flux:sidebar.item icon="chart-pie" :href="route('school.reports.index', $activeSchool)" :current="request()->routeIs('school.reports.*')" wire:navigate>
+                                Reportes
+                            </flux:sidebar.item>
+                            <flux:sidebar.item icon="shield-check" :href="route('school.audit.index', $activeSchool)" :current="request()->routeIs('school.audit.*')" wire:navigate>
+                                Auditoría
+                            </flux:sidebar.item>
+                        @endif
                     </flux:sidebar.group>
 
                     <flux:sidebar.group class="grid gap-0.5 mt-2 pt-2 border-t border-zinc-200/60 dark:border-zinc-800">

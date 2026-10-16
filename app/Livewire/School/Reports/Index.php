@@ -9,6 +9,8 @@ use App\Models\SchoolGroup;
 use App\Models\Student;
 use App\Models\Teacher;
 use Illuminate\Contracts\View\View;
+use Illuminate\Support\Facades\DB;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -16,6 +18,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 #[Title('Reportes y Estadísticas')]
 class Index extends Component
 {
+    #[Locked]
     public School $school;
 
     // Report configuration
@@ -31,6 +34,8 @@ class Index extends Component
 
     public function mount(School $school): void
     {
+        abort_if(auth()->user()?->isTeacherOnly($school), 403);
+
         $this->school = $school;
 
         $activeYear = $this->school->schoolYears()
@@ -117,7 +122,16 @@ class Index extends Component
      */
     protected function getStudentsReportData(): array
     {
-        $studentsQuery = Student::where('school_id', $this->school->id)
+        $dateFilter = function ($q) {
+            if ($this->dateFrom) {
+                $q->whereDate('date', '>=', $this->dateFrom);
+            }
+            if ($this->dateTo) {
+                $q->whereDate('date', '<=', $this->dateTo);
+            }
+        };
+
+        $students = Student::where('school_id', $this->school->id)
             ->whereHas('enrollments', function ($q) {
                 if ($this->schoolYearId) {
                     $q->where('school_year_id', $this->schoolYearId);
@@ -126,31 +140,24 @@ class Index extends Component
                     $q->where('school_group_id', $this->groupId);
                 }
             })
+            ->withCount([
+                'attendances as present_count' => fn ($q) => $q->where('status', 'PRESENTE')->whereHas('classSession', $dateFilter),
+                'attendances as absent_count' => fn ($q) => $q->where('status', 'AUSENTE')->whereHas('classSession', $dateFilter),
+                'attendances as retardo_count' => fn ($q) => $q->where('status', 'RETARDO')->whereHas('classSession', $dateFilter),
+                'attendances as justified_count' => fn ($q) => $q->where('status', 'AUSENTE')->whereHas('justification')->whereHas('classSession', $dateFilter),
+            ])
             ->with(['currentEnrollment.schoolGroup.shift'])
             ->orderBy('last_name')
-            ->orderBy('first_name');
+            ->orderBy('first_name')
+            ->get();
 
-        $students = $studentsQuery->get();
         $results = [];
 
         foreach ($students as $student) {
-            $attendancesQuery = Attendance::where('student_id', $student->id)
-                ->whereHas('classSession', function ($q) {
-                    if ($this->dateFrom) {
-                        $q->whereDate('date', '>=', $this->dateFrom);
-                    }
-                    if ($this->dateTo) {
-                        $q->whereDate('date', '<=', $this->dateTo);
-                    }
-                })
-                ->with('justification');
-
-            $attendances = $attendancesQuery->get();
-
-            $present = $attendances->where('status', 'PRESENTE')->count();
-            $absent = $attendances->where('status', 'AUSENTE')->count();
-            $retardo = $attendances->where('status', 'RETARDO')->count();
-            $justified = $attendances->filter(fn ($a) => $a->status === 'AUSENTE' && $a->justification !== null)->count();
+            $present = (int) $student->present_count;
+            $absent = (int) $student->absent_count;
+            $retardo = (int) $student->retardo_count;
+            $justified = (int) $student->justified_count;
             $total = $present + $absent + $retardo;
 
             $percentage = $total > 0 ? round((($present + ($retardo * 0.5)) / $total) * 100, 1) : 100.0;
@@ -180,27 +187,51 @@ class Index extends Component
      */
     protected function getGroupsReportData(): array
     {
-        $groupsQuery = SchoolGroup::whereHas('schoolYear', fn ($q) => $q->where('school_id', $this->school->id))
+        $groups = SchoolGroup::whereHas('schoolYear', fn ($q) => $q->where('school_id', $this->school->id))
             ->when($this->schoolYearId, fn ($q) => $q->where('school_year_id', $this->schoolYearId))
             ->when($this->groupId, fn ($q) => $q->where('id', $this->groupId))
-            ->with(['shift', 'enrollments' => fn ($q) => $q->where('status', 'ACTIVO')])
+            ->with('shift')
+            ->withCount(['enrollments' => fn ($q) => $q->where('status', 'ACTIVO')])
             ->orderBy('grade')
-            ->orderBy('section');
+            ->orderBy('section')
+            ->get();
 
-        $groups = $groupsQuery->get();
+        if ($groups->isEmpty()) {
+            return [];
+        }
+
+        $groupIds = $groups->pluck('id');
+
+        $sessionCounts = ClassSession::join('school_classes', 'class_sessions.school_class_id', '=', 'school_classes.id')
+            ->whereIn('school_classes.school_group_id', $groupIds)
+            ->when($this->dateFrom, fn ($q) => $q->whereDate('class_sessions.date', '>=', $this->dateFrom))
+            ->when($this->dateTo, fn ($q) => $q->whereDate('class_sessions.date', '<=', $this->dateTo))
+            ->select('school_classes.school_group_id', DB::raw('COUNT(class_sessions.id) as sessions_count'))
+            ->groupBy('school_classes.school_group_id')
+            ->pluck('sessions_count', 'school_classes.school_group_id');
+
+        $attendanceStats = Attendance::join('class_sessions', 'attendances.class_session_id', '=', 'class_sessions.id')
+            ->join('school_classes', 'class_sessions.school_class_id', '=', 'school_classes.id')
+            ->whereIn('school_classes.school_group_id', $groupIds)
+            ->when($this->dateFrom, fn ($q) => $q->whereDate('class_sessions.date', '>=', $this->dateFrom))
+            ->when($this->dateTo, fn ($q) => $q->whereDate('class_sessions.date', '<=', $this->dateTo))
+            ->select(
+                'school_classes.school_group_id',
+                DB::raw("SUM(CASE WHEN attendances.status = 'PRESENTE' THEN 1 ELSE 0 END) as total_present"),
+                DB::raw("SUM(CASE WHEN attendances.status = 'AUSENTE' THEN 1 ELSE 0 END) as total_absent"),
+                DB::raw("SUM(CASE WHEN attendances.status = 'RETARDO' THEN 1 ELSE 0 END) as total_retardo")
+            )
+            ->groupBy('school_classes.school_group_id')
+            ->get()
+            ->keyBy('school_group_id');
+
         $results = [];
 
         foreach ($groups as $group) {
-            $sessions = ClassSession::whereHas('schoolClass', fn ($q) => $q->where('school_group_id', $group->id))
-                ->when($this->dateFrom, fn ($q) => $q->whereDate('date', '>=', $this->dateFrom))
-                ->when($this->dateTo, fn ($q) => $q->whereDate('date', '<=', $this->dateTo))
-                ->with('attendances')
-                ->get();
-
-            $allAttendances = $sessions->pluck('attendances')->flatten();
-            $totalPresent = $allAttendances->where('status', 'PRESENTE')->count();
-            $totalAbsent = $allAttendances->where('status', 'AUSENTE')->count();
-            $totalRetardo = $allAttendances->where('status', 'RETARDO')->count();
+            $stats = $attendanceStats->get($group->id);
+            $totalPresent = (int) ($stats->total_present ?? 0);
+            $totalAbsent = (int) ($stats->total_absent ?? 0);
+            $totalRetardo = (int) ($stats->total_retardo ?? 0);
             $grandTotal = $totalPresent + $totalAbsent + $totalRetardo;
 
             $percentage = $grandTotal > 0 ? round((($totalPresent + ($totalRetardo * 0.5)) / $grandTotal) * 100, 1) : 100.0;
@@ -209,8 +240,8 @@ class Index extends Component
                 'id' => $group->id,
                 'name' => "{$group->grade}° '{$group->section}'",
                 'shift' => $group->shift ? $group->shift->name : 'N/A',
-                'students_count' => $group->enrollments->count(),
-                'sessions_count' => $sessions->count(),
+                'students_count' => (int) $group->enrollments_count,
+                'sessions_count' => (int) ($sessionCounts->get($group->id) ?? 0),
                 'total_present' => $totalPresent,
                 'total_absent' => $totalAbsent,
                 'total_retardo' => $totalRetardo,

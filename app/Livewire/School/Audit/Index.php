@@ -6,6 +6,7 @@ use App\Models\AuditLog;
 use App\Models\School;
 use App\Models\User;
 use Illuminate\Contracts\View\View;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Livewire\WithPagination;
@@ -15,6 +16,7 @@ class Index extends Component
 {
     use WithPagination;
 
+    #[Locked]
     public School $school;
 
     public string $search = '';
@@ -34,6 +36,8 @@ class Index extends Component
 
     public function mount(School $school): void
     {
+        abort_if(auth()->user()?->isTeacherOnly($school), 403);
+
         $this->school = $school;
     }
 
@@ -70,7 +74,7 @@ class Index extends Component
 
     public function viewDetails(string $logId): void
     {
-        $this->selectedLog = AuditLog::with(['user', 'school'])->findOrFail($logId);
+        $this->selectedLog = $this->school->auditLogs()->with(['user', 'school'])->findOrFail($logId);
         $this->showDetailModal = true;
     }
 

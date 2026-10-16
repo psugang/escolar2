@@ -25,6 +25,10 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $updated_at
  * @property School|null $school
  * @property StudentEnrollment|null $currentEnrollment
+ * @property int|null $present_count
+ * @property int|null $absent_count
+ * @property int|null $retardo_count
+ * @property int|null $justified_count
  */
 class Student extends Model
 {
@@ -96,6 +100,14 @@ class Student extends Model
     public function studentGuardians(): HasMany
     {
         return $this->hasMany(StudentGuardian::class);
+    }
+
+    /**
+     * @return HasMany<Attendance, $this>
+     */
+    public function attendances(): HasMany
+    {
+        return $this->hasMany(Attendance::class);
     }
 
     public function markAsBaja(): void

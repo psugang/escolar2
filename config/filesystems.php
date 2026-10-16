@@ -38,6 +38,14 @@ return [
             'report' => false,
         ],
 
+        'justifications' => [
+            'driver' => 'local',
+            'root' => env('JUSTIFICATIONS_DISK_PATH', storage_path('app/private/justifications')),
+            'visibility' => 'private',
+            'throw' => false,
+            'report' => false,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),

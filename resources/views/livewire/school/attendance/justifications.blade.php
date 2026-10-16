@@ -76,7 +76,7 @@
                                             <flux:badge size="xs" color="emerald">Justificada</flux:badge>
                                             @if ($att->justification->document_path)
                                                 <a
-                                                    href="{{ asset('storage/' . $att->justification->document_path) }}"
+                                                    href="{{ route('school.justifications.document', [$school, $att->justification]) }}"
                                                     target="_blank"
                                                     class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5"
                                                 >

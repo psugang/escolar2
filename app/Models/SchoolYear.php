@@ -51,4 +51,12 @@ class SchoolYear extends Model
     {
         return $this->hasMany(SchoolGroup::class);
     }
+
+    /**
+     * @return HasMany<SchoolSuspension, $this>
+     */
+    public function suspensions(): HasMany
+    {
+        return $this->hasMany(SchoolSuspension::class);
+    }
 }

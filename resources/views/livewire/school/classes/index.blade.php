@@ -14,8 +14,11 @@
             </flux:subheading>
         </div>
 
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 flex-wrap">
             @if ($activeTab === 'classes')
+                <flux:button variant="subtle" icon="arrow-path" wire:click="syncAllYearSessions" title="Generar sesiones para todas las clases del ciclo">
+                    Sincronizar Sesiones
+                </flux:button>
                 <flux:button variant="subtle" icon="wrench-screwdriver" wire:click="openCreateWorkshopModal">
                     Nuevo Taller
                 </flux:button>
@@ -112,26 +115,37 @@
                                 <flux:icon name="user-group" class="size-4" />
                                 <span>{{ $class->workshopStudents->count() }} alumnos inscritos manualmente</span>
                             </div>
-                        @else
-                            <div class="mt-2 text-xs text-zinc-400">
-                                Alumnos derivados automáticamente del grupo
-                            </div>
                         @endif
+
+                        <div class="mt-2 text-xs text-zinc-500 flex items-center gap-1.5">
+                            <flux:icon name="clock" class="size-3.5 text-zinc-400" />
+                            <span>{{ $class->schedules->count() }} bloque(s) de horario</span>
+                        </div>
                     </div>
 
-                    <div class="pt-3 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
-                        @if ($class->is_workshop)
+                    <div class="pt-3 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-1 flex-wrap">
+                        <div class="flex items-center gap-1">
                             <flux:button
                                 size="xs"
                                 variant="subtle"
-                                icon="user-plus"
-                                wire:click="openWorkshopStudentsModal('{{ $class->id }}')"
+                                icon="clock"
+                                wire:click="openScheduleModal('{{ $class->id }}')"
+                                title="Configurar horario semanal"
                             >
-                                Gestionar Alumnos
+                                Horario
                             </flux:button>
-                        @else
-                            <div></div>
-                        @endif
+
+                            @if ($class->is_workshop)
+                                <flux:button
+                                    size="xs"
+                                    variant="subtle"
+                                    icon="user-plus"
+                                    wire:click="openWorkshopStudentsModal('{{ $class->id }}')"
+                                >
+                                    Alumnos
+                                </flux:button>
+                            @endif
+                        </div>
 
                         <flux:button
                             size="xs"
@@ -427,6 +441,108 @@
                 </flux:button>
                 <flux:button variant="danger" wire:click="deleteClass">
                     Sí, Eliminar
+                </flux:button>
+            </div>
+        </div>
+    </flux:modal>
+
+    <!-- Modal: Gestión de Horarios Semanales -->
+    <flux:modal wire:model="showScheduleModal" class="md:w-lg">
+        <div class="space-y-6">
+            <div>
+                <flux:heading size="lg">Horario Semanal de Clase</flux:heading>
+                <flux:subheading>
+                    Clase: <span class="font-bold text-zinc-900 dark:text-zinc-100">{{ $scheduleClass?->display_name }}</span>
+                    @if ($scheduleClass?->teacher)
+                        · Prof. {{ $scheduleClass->teacher->full_name }}
+                    @endif
+                </flux:subheading>
+            </div>
+
+            <!-- Formulario para agregar bloque de horario -->
+            <form wire:submit="addSchedule" class="p-4 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-zinc-200 dark:border-zinc-700 space-y-3">
+                <div class="font-semibold text-xs uppercase tracking-wider text-zinc-500">
+                    Agregar Bloque Semanal
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                        <flux:select wire:model="newScheduleDay" label="Día *">
+                            <flux:select.option value="1">Lunes</flux:select.option>
+                            <flux:select.option value="2">Martes</flux:select.option>
+                            <flux:select.option value="3">Miércoles</flux:select.option>
+                            <flux:select.option value="4">Jueves</flux:select.option>
+                            <flux:select.option value="5">Viernes</flux:select.option>
+                            <flux:select.option value="6">Sábado</flux:select.option>
+                        </flux:select>
+                    </div>
+                    <div>
+                        <flux:input
+                            wire:model="newScheduleStartTime"
+                            type="time"
+                            label="Hora Inicio *"
+                            required
+                        />
+                    </div>
+                    <div>
+                        <flux:input
+                            wire:model="newScheduleEndTime"
+                            type="time"
+                            label="Hora Fin *"
+                            required
+                        />
+                    </div>
+                </div>
+                <div class="flex justify-end pt-1">
+                    <flux:button type="submit" size="sm" variant="primary" icon="plus">
+                        Guardar Horario y Sincronizar
+                    </flux:button>
+                </div>
+            </form>
+
+            <!-- Lista de bloques de horarios -->
+            <div class="space-y-2">
+                <div class="font-semibold text-xs text-zinc-600 dark:text-zinc-400">
+                    Bloques Semanales Asignados ({{ $scheduleClass?->schedules->count() ?? 0 }})
+                </div>
+
+                <div class="max-h-60 overflow-y-auto divide-y divide-zinc-200 dark:divide-zinc-700 border border-zinc-200 dark:border-zinc-700 rounded-lg">
+                    @forelse ($scheduleClass?->schedules ?? [] as $sched)
+                        <div class="p-3 flex items-center justify-between hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors">
+                            <div class="flex items-center gap-3">
+                                <flux:badge size="xs" color="indigo" class="w-20 justify-center">
+                                    {{ $sched->day_name }}
+                                </flux:badge>
+                                <span class="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                                    {{ substr($sched->start_time, 0, 5) }} — {{ substr($sched->end_time, 0, 5) }}
+                                </span>
+                            </div>
+                            <flux:button
+                                size="xs"
+                                variant="subtle"
+                                icon="trash"
+                                class="text-red-600 hover:text-red-700"
+                                wire:click="deleteSchedule('{{ $sched->id }}')"
+                                title="Eliminar bloque de horario"
+                            />
+                        </div>
+                    @empty
+                        <div class="p-6 text-center text-xs text-zinc-400">
+                            Aún no se han configurado horarios para esta clase.
+                        </div>
+                    @endforelse
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-2 border-t border-zinc-200 dark:border-zinc-700">
+                @if ($scheduleClass)
+                    <flux:button size="sm" variant="subtle" icon="arrow-path" wire:click="syncClassSessions('{{ $scheduleClass->id }}')">
+                        Re-sincronizar Sesiones
+                    </flux:button>
+                @else
+                    <div></div>
+                @endif
+                <flux:button variant="ghost" wire:click="$set('showScheduleModal', false)">
+                    Cerrar
                 </flux:button>
             </div>
         </div>

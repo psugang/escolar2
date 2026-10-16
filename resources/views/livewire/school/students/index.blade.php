@@ -554,76 +554,202 @@
     </flux:modal>
 
     <!-- Modal: Importar Alumnos desde CSV -->
-    <flux:modal wire:model="showImportModal" class="md:w-xl">
-        <form wire:submit="importCsv" class="space-y-6">
-            <div>
-                <flux:heading size="lg">Importación Rápida de Alumnos (.CSV)</flux:heading>
-                <flux:subheading>
-                    Carga masiva de alumnos organizados por grado, grupo y apellidos.
-                </flux:subheading>
-            </div>
+    <flux:modal wire:model="showImportModal" class="md:w-3xl">
+        @if ($importStep === 'upload')
+            <form wire:submit="previewImportCsv" class="space-y-6">
+                <div>
+                    <flux:heading size="lg">Importación Rápida de Alumnos (.CSV)</flux:heading>
+                    <flux:subheading>
+                        Carga masiva de alumnos con detección inteligente de re-inscripciones y nuevos ingresos.
+                    </flux:subheading>
+                </div>
 
-            <!-- Instrucciones de formato y botón de plantilla -->
-            <div class="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 space-y-3 text-xs">
-                <div class="flex items-center justify-between">
-                    <span class="font-bold text-zinc-900 dark:text-zinc-100">Columnas requeridas en el archivo:</span>
-                    <flux:button size="xs" variant="subtle" icon="arrow-down-tray" wire:click="downloadSampleCsv" type="button">
-                        Descargar Plantilla CSV
+                <!-- Instrucciones de formato y botón de plantilla -->
+                <div class="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 space-y-3 text-xs">
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold text-zinc-900 dark:text-zinc-100">Columnas requeridas en el archivo:</span>
+                        <flux:button size="xs" variant="subtle" icon="arrow-down-tray" wire:click="downloadSampleCsv" type="button">
+                            Descargar Plantilla CSV
+                        </flux:button>
+                    </div>
+
+                    <div class="font-mono bg-white dark:bg-zinc-900 p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 overflow-x-auto">
+                        grado,grupo,apellido_paterno,apellido_materno,nombre,curp,tutor_nombre,tutor_correo,tutor_telefono
+                    </div>
+
+                    <p class="text-zinc-500">
+                        Las columnas <strong class="text-zinc-700 dark:text-zinc-300">curp</strong> y datos de tutor (<strong class="text-zinc-700 dark:text-zinc-300">tutor_nombre, tutor_correo, tutor_telefono</strong>) son opcionales. Si incluyes datos del tutor, se vinculará automáticamente sin duplicados.
+                    </p>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <flux:select wire:model="importYearId" label="Ciclo Escolar *">
+                        @foreach ($schoolYears as $year)
+                            <flux:select.option value="{{ $year->id }}">Ciclo {{ $year->name }}</flux:select.option>
+                        @endforeach
+                    </flux:select>
+
+                    <flux:select wire:model="importShiftId" label="Turno Predeterminado *">
+                        @foreach ($shifts as $sh)
+                            <flux:select.option value="{{ $sh->id }}">{{ $sh->name }}</flux:select.option>
+                        @endforeach
+                    </flux:select>
+                </div>
+
+                <div>
+                    <flux:input
+                        type="file"
+                        wire:model="importFile"
+                        label="Seleccionar Archivo .CSV *"
+                        accept=".csv,text/csv,text/plain"
+                    />
+                </div>
+
+                @if (! empty($importErrors))
+                    <div class="p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 space-y-1">
+                        <div class="font-bold text-xs text-red-700 dark:text-red-400">Observaciones en la carga:</div>
+                        <ul class="text-xs text-red-600 dark:text-red-300 list-disc list-inside max-h-32 overflow-y-auto">
+                            @foreach ($importErrors as $err)
+                                <li>{{ $err }}</li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+
+                <div class="flex items-center justify-end gap-3 pt-2">
+                    <flux:button variant="ghost" wire:click="$set('showImportModal', false)">
+                        Cancelar
+                    </flux:button>
+                    <flux:button variant="primary" type="submit" wire:loading.attr="disabled">
+                        <span wire:loading.remove wire:target="previewImportCsv">Analizar Archivo</span>
+                        <span wire:loading wire:target="previewImportCsv">Analizando...</span>
                     </flux:button>
                 </div>
-
-                <div class="font-mono bg-white dark:bg-zinc-900 p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 overflow-x-auto">
-                    grado,grupo,apellido_paterno,apellido_materno,nombre
+            </form>
+        @else
+            <div class="space-y-6">
+                <div>
+                    <flux:heading size="lg">Revisión y Pre-visualización</flux:heading>
+                    <flux:subheading>
+                        Verifica los alumnos detectados antes de aplicar los cambios en el sistema.
+                    </flux:subheading>
                 </div>
 
-                <p class="text-zinc-500">
-                    Si el grupo (ej. 1° "A") no existe en el ciclo seleccionado, el sistema lo creará automáticamente con el turno seleccionado.
-                </p>
-            </div>
+                <!-- Resumen de conteos -->
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div class="p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 rounded-xl">
+                        <div class="text-xs text-blue-600 dark:text-blue-400 font-medium">Re-inscripciones</div>
+                        <div class="text-2xl font-bold text-blue-700 dark:text-blue-300 mt-1">
+                            {{ count($previewReEnrollments) }}
+                        </div>
+                        <div class="text-[11px] text-blue-600/80 dark:text-blue-400/80 mt-0.5">Alumnos existentes</div>
+                    </div>
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <flux:select wire:model="importYearId" label="Ciclo Escolar *">
-                    @foreach ($schoolYears as $year)
-                        <flux:select.option value="{{ $year->id }}">Ciclo {{ $year->name }}</flux:select.option>
-                    @endforeach
-                </flux:select>
+                    <div class="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 rounded-xl">
+                        <div class="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Nuevos Ingresos</div>
+                        <div class="text-2xl font-bold text-emerald-700 dark:text-emerald-300 mt-1">
+                            {{ count($previewNewStudents) }}
+                        </div>
+                        <div class="text-[11px] text-emerald-600/80 dark:text-emerald-400/80 mt-0.5">Nuevos en el plantel</div>
+                    </div>
 
-                <flux:select wire:model="importShiftId" label="Turno Predeterminado *">
-                    @foreach ($shifts as $sh)
-                        <flux:select.option value="{{ $sh->id }}">{{ $sh->name }}</flux:select.option>
-                    @endforeach
-                </flux:select>
-            </div>
-
-            <div>
-                <flux:input
-                    type="file"
-                    wire:model="importFile"
-                    label="Seleccionar Archivo .CSV *"
-                    accept=".csv,text/csv,text/plain"
-                />
-            </div>
-
-            @if (! empty($importErrors))
-                <div class="p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 space-y-1">
-                    <div class="font-bold text-xs text-red-700 dark:text-red-400">Observaciones en la carga:</div>
-                    <ul class="text-xs text-red-600 dark:text-red-300 list-disc list-inside max-h-32 overflow-y-auto">
-                        @foreach ($importErrors as $err)
-                            <li>{{ $err }}</li>
-                        @endforeach
-                    </ul>
+                    <div class="p-3 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl col-span-2 sm:col-span-1">
+                        <div class="text-xs text-zinc-600 dark:text-zinc-400 font-medium">Omitidos / Errores</div>
+                        <div class="text-2xl font-bold text-zinc-700 dark:text-zinc-300 mt-1">
+                            {{ count($previewErrors) }}
+                        </div>
+                        <div class="text-[11px] text-zinc-500 mt-0.5">Filas no procesables</div>
+                    </div>
                 </div>
-            @endif
 
-            <div class="flex items-center justify-end gap-3 pt-2">
-                <flux:button variant="ghost" wire:click="$set('showImportModal', false)">
-                    Cancelar
-                </flux:button>
-                <flux:button variant="primary" type="submit">
-                    Iniciar Importación
-                </flux:button>
+                @if (! empty($previewErrors))
+                    <div class="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 space-y-1">
+                        <div class="font-bold text-xs text-amber-800 dark:text-amber-300">Filas que no se importarán:</div>
+                        <ul class="text-xs text-amber-700 dark:text-amber-400 list-disc list-inside max-h-24 overflow-y-auto">
+                            @foreach ($previewErrors as $err)
+                                <li>{{ $err }}</li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+
+                <!-- Listado de Re-inscripciones -->
+                @if (! empty($previewReEnrollments))
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
+                                Re-inscripciones (Pasan al nuevo grupo conservando tutores e historial):
+                            </span>
+                            <flux:badge size="xs" color="blue">{{ count($previewReEnrollments) }}</flux:badge>
+                        </div>
+                        <div class="max-h-48 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-700 divide-y divide-zinc-200 dark:divide-zinc-700 text-xs">
+                            @foreach ($previewReEnrollments as $item)
+                                <div class="p-2.5 flex items-center justify-between bg-white dark:bg-zinc-900">
+                                    <div>
+                                        <div class="font-medium text-zinc-900 dark:text-zinc-100">{{ $item['name'] }}</div>
+                                        <div class="text-zinc-500 text-[11px]">
+                                            @if(!empty($item['curp'])) CURP: {{ $item['curp'] }} · @endif Grupo previo: {{ $item['current_group'] }}
+                                            @if(!empty($item['tutor_nombre'])) · Tutor: {{ $item['tutor_nombre'] }} @endif
+                                        </div>
+                                    </div>
+                                    <div class="text-right">
+                                        <flux:badge size="xs" color="blue">
+                                            Nuevo: {{ $item['target_grade'] }}°{{ $item['target_section'] }}
+                                        </flux:badge>
+                                    </div>
+                                </div>
+                            @endforeach
+                        </div>
+                    </div>
+                @endif
+
+                <!-- Listado de Alumnos Nuevos -->
+                @if (! empty($previewNewStudents))
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
+                                Alumnos de Nuevo Ingreso:
+                            </span>
+                            <flux:badge size="xs" color="emerald">{{ count($previewNewStudents) }}</flux:badge>
+                        </div>
+                        <div class="max-h-48 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-700 divide-y divide-zinc-200 dark:divide-zinc-700 text-xs">
+                            @foreach ($previewNewStudents as $item)
+                                <div class="p-2.5 flex items-center justify-between bg-white dark:bg-zinc-900">
+                                    <div>
+                                        <div class="font-medium text-zinc-900 dark:text-zinc-100">{{ $item['name'] }}</div>
+                                        <div class="text-zinc-500 text-[11px]">
+                                            @if(!empty($item['curp'])) CURP: {{ $item['curp'] }} @else Sin CURP @endif
+                                            @if(!empty($item['tutor_nombre'])) · Tutor: {{ $item['tutor_nombre'] }} @endif
+                                        </div>
+                                    </div>
+                                    <div class="text-right">
+                                        <flux:badge size="xs" color="emerald">
+                                            Asignar: {{ $item['target_grade'] }}°{{ $item['target_section'] }}
+                                        </flux:badge>
+                                    </div>
+                                </div>
+                            @endforeach
+                        </div>
+                    </div>
+                @endif
+
+                <div class="flex items-center justify-between pt-2 border-t border-zinc-200 dark:border-zinc-700">
+                    <flux:button variant="ghost" wire:click="$set('importStep', 'upload')">
+                        ← Cambiar Archivo
+                    </flux:button>
+
+                    <div class="flex items-center gap-2">
+                        <flux:button variant="ghost" wire:click="$set('showImportModal', false)">
+                            Cancelar
+                        </flux:button>
+                        <flux:button variant="primary" wire:click="confirmImport" wire:loading.attr="disabled">
+                            <span wire:loading.remove wire:target="confirmImport">Confirmar e Inscribir ({{ count($previewReEnrollments) + count($previewNewStudents) }})</span>
+                            <span wire:loading wire:target="confirmImport">Inscribiendo...</span>
+                        </flux:button>
+                    </div>
+                </div>
             </div>
-        </form>
+        @endif
     </flux:modal>
 </div>
 

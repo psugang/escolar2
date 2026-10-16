@@ -63,13 +63,23 @@
                                 {{ $year->school_groups_count }} grupo(s)
                             </span>
 
-                            <button
-                                type="button"
-                                wire:click.stop="openEditYearModal('{{ $year->id }}')"
-                                class="text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
-                            >
-                                Editar Ciclo
-                            </button>
+                            <div class="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    wire:click.stop="openSuspensionModal('{{ $year->id }}')"
+                                    class="text-amber-600 dark:text-amber-400 hover:underline font-medium"
+                                >
+                                    Suspensiones
+                                </button>
+                                <span class="text-zinc-300">·</span>
+                                <button
+                                    type="button"
+                                    wire:click.stop="openEditYearModal('{{ $year->id }}')"
+                                    class="text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
+                                >
+                                    Editar
+                                </button>
+                            </div>
                         </div>
                     </div>
                 @empty
@@ -91,7 +101,10 @@
                         </flux:subheading>
                     </div>
 
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <flux:button size="sm" variant="subtle" icon="no-symbol" wire:click="openSuspensionModal('{{ $selectedYear->id }}')">
+                            Suspensiones
+                        </flux:button>
                         <flux:button size="sm" variant="subtle" icon="sparkles" wire:click="openBatchModal">
                             Generar Grupos
                         </flux:button>
@@ -362,6 +375,85 @@
                 </flux:button>
                 <flux:button variant="danger" wire:click="deleteGroup">
                     Sí, Eliminar Grupo
+                </flux:button>
+            </div>
+        </div>
+    </flux:modal>
+
+    <!-- Modal: Gestión de Días de Suspensión Oficial -->
+    <flux:modal wire:model="showSuspensionModal" class="md:w-lg">
+        <div class="space-y-6">
+            <div>
+                <flux:heading size="lg">Días de Suspensión Oficial / Inhábiles</flux:heading>
+                <flux:subheading>
+                    Las clases en estas fechas se omiten automáticamente del pase de lista.
+                </flux:subheading>
+            </div>
+
+            <!-- Formulario para agregar suspensión -->
+            <form wire:submit="addSuspension" class="p-4 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-zinc-200 dark:border-zinc-700 space-y-3">
+                <div class="font-semibold text-xs uppercase tracking-wider text-zinc-500">
+                    Agregar Día Inhábil
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <flux:input
+                        wire:model="newSuspensionDate"
+                        type="date"
+                        label="Fecha *"
+                        required
+                    />
+                    <flux:input
+                        wire:model="newSuspensionReason"
+                        label="Motivo *"
+                        placeholder="Ej. Consejo Técnico, Feriado..."
+                        required
+                    />
+                </div>
+                <div class="flex justify-end pt-1">
+                    <flux:button type="submit" size="sm" variant="primary" icon="plus">
+                        Registrar Suspensión
+                    </flux:button>
+                </div>
+            </form>
+
+            <!-- Lista de suspensiones registradas -->
+            <div class="space-y-2">
+                <div class="font-semibold text-xs text-zinc-600 dark:text-zinc-400">
+                    Días Inhábiles Registrados ({{ $suspensions->count() }})
+                </div>
+
+                <div class="max-h-60 overflow-y-auto divide-y divide-zinc-200 dark:divide-zinc-700 border border-zinc-200 dark:border-zinc-700 rounded-lg">
+                    @forelse ($suspensions as $susp)
+                        <div class="p-3 flex items-center justify-between hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors">
+                            <div>
+                                <div class="font-bold text-sm text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                                    <flux:badge size="xs" color="amber">{{ $susp->date->format('d/m/Y') }}</flux:badge>
+                                    <span>{{ $susp->date->translatedFormat('l') }}</span>
+                                </div>
+                                <div class="text-xs text-zinc-500 mt-0.5">
+                                    {{ $susp->reason }}
+                                </div>
+                            </div>
+                            <flux:button
+                                size="xs"
+                                variant="subtle"
+                                icon="trash"
+                                class="text-red-600 hover:text-red-700"
+                                wire:click="deleteSuspension('{{ $susp->id }}')"
+                                title="Eliminar suspensión"
+                            />
+                        </div>
+                    @empty
+                        <div class="p-6 text-center text-xs text-zinc-400">
+                            No hay días de suspensión registrados para este ciclo escolar.
+                        </div>
+                    @endforelse
+                </div>
+            </div>
+
+            <div class="flex justify-end pt-2 border-t border-zinc-200 dark:border-zinc-700">
+                <flux:button variant="ghost" wire:click="$set('showSuspensionModal', false)">
+                    Cerrar
                 </flux:button>
             </div>
         </div>

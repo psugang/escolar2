@@ -3,10 +3,12 @@
 use App\Enums\SchoolRole;
 use App\Livewire\School\Attendance\DailyAttendance;
 use App\Livewire\School\Attendance\Justifications;
+use App\Mail\StudentAbsenceNotificationMail;
 use App\Models\Attendance;
 use App\Models\AttendanceJustification;
 use App\Models\AttendanceLog;
 use App\Models\ClassSession;
+use App\Models\Guardian;
 use App\Models\School;
 use App\Models\SchoolClass;
 use App\Models\SchoolGroup;
@@ -14,11 +16,13 @@ use App\Models\SchoolYear;
 use App\Models\Shift;
 use App\Models\Student;
 use App\Models\StudentEnrollment;
+use App\Models\StudentGuardian;
 use App\Models\Subject;
 use App\Models\Teacher;
 use App\Models\TeacherSchool;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 
@@ -243,7 +247,7 @@ test('substitute teacher can take attendance for sessions where assigned', funct
 });
 
 test('school admin can upload justification for an absent student preserving the absence record', function () {
-    Storage::fake('public');
+    Storage::fake('justifications');
 
     $session = ClassSession::create([
         'school_class_id' => $this->class->id,
@@ -278,9 +282,9 @@ test('school admin can upload justification for an absent student preserving the
     expect($justification->reason)->toBe('Cita médica con especialista por bronquitis');
     expect($justification->document_name)->toBe('certificado_medico.pdf');
     expect($justification->document_path)->not->toBeNull();
-    Storage::disk('public')->assertExists($justification->document_path);
+    Storage::disk('justifications')->assertExists($justification->document_path);
 
-    // Can delete justification, leaving absence intact
+    // Can delete justification, leaving absence intact and deleting file
     Livewire::actingAs($this->admin)
         ->test(Justifications::class, ['school' => $this->school])
         ->call('openDeleteModal', $justification->id)
@@ -288,4 +292,257 @@ test('school admin can upload justification for an absent student preserving the
 
     expect(AttendanceJustification::find($justification->id))->toBeNull();
     expect($absence->fresh()->status)->toBe('AUSENTE');
+    Storage::disk('justifications')->assertMissing($justification->document_path);
+});
+
+test('saving attendance queues absence mail and avoids duplicate notifications via absence_notified_at', function () {
+    Mail::fake();
+
+    $guardian = Guardian::create([
+        'school_id' => $this->school->id,
+        'first_name' => 'Roberto',
+        'last_name' => 'López',
+        'email' => 'roberto.tutor@example.com',
+    ]);
+
+    StudentGuardian::create([
+        'student_id' => $this->student1->id,
+        'guardian_id' => $guardian->id,
+        'relationship' => 'Padre',
+    ]);
+
+    $session = ClassSession::create([
+        'school_class_id' => $this->class->id,
+        'original_teacher_id' => $this->teacher->id,
+        'date' => today()->format('Y-m-d'),
+        'start_time' => '09:00',
+        'end_time' => '09:50',
+        'status' => 'PROGRAMADA',
+    ]);
+
+    // Save attendance with student 1 AUSENTE
+    Livewire::actingAs($this->teacherUser)
+        ->test(DailyAttendance::class, ['school' => $this->school])
+        ->call('selectSession', $session->id)
+        ->set('attendanceStates.'.$this->student1->id, 'AUSENTE')
+        ->set('attendanceStates.'.$this->student2->id, 'PRESENTE')
+        ->set('sendGuardianNotifications', true)
+        ->call('saveAttendance')
+        ->assertHasNoErrors();
+
+    // Verify mail was queued
+    Mail::assertQueued(StudentAbsenceNotificationMail::class, function ($mail) {
+        return $mail->hasTo('roberto.tutor@example.com');
+    });
+
+    // Verify absence_notified_at is populated
+    $attendance = Attendance::where('class_session_id', $session->id)
+        ->where('student_id', $this->student1->id)
+        ->first();
+    expect($attendance)->not->toBeNull();
+    expect($attendance->absence_notified_at)->not->toBeNull();
+
+    // Now edit the session again: no new emails should be queued for student 1
+    Mail::fake();
+
+    Livewire::actingAs($this->teacherUser)
+        ->test(DailyAttendance::class, ['school' => $this->school])
+        ->call('selectSession', $session->id)
+        ->set('attendanceStates.'.$this->student1->id, 'AUSENTE')
+        ->set('attendanceStates.'.$this->student2->id, 'PRESENTE')
+        ->set('sendGuardianNotifications', true)
+        ->call('saveAttendance')
+        ->assertHasNoErrors();
+
+    Mail::assertNothingQueued();
+});
+
+test('uploading image justification converts it to webp and stores it in private justifications disk', function () {
+    Storage::fake('justifications');
+
+    $session = ClassSession::create([
+        'school_class_id' => $this->class->id,
+        'original_teacher_id' => $this->teacher->id,
+        'date' => today()->format('Y-m-d'),
+        'start_time' => '08:00',
+        'end_time' => '08:50',
+        'status' => 'COMPLETADA',
+    ]);
+
+    $absence = Attendance::create([
+        'class_session_id' => $session->id,
+        'student_id' => $this->student2->id,
+        'status' => 'AUSENTE',
+        'recorded_by_user_id' => $this->teacherUser->id,
+    ]);
+
+    $file = UploadedFile::fake()->image('receta_medica.png', 400, 300);
+
+    Livewire::actingAs($this->admin)
+        ->test(Justifications::class, ['school' => $this->school])
+        ->call('openJustifyModal', $absence->id)
+        ->set('reason', 'Reposo médico')
+        ->set('document', $file)
+        ->call('saveJustification');
+
+    $justification = AttendanceJustification::where('attendance_id', $absence->id)->first();
+    expect($justification)->not->toBeNull();
+    expect($justification->document_path)->toEndWith('.webp');
+    Storage::disk('justifications')->assertExists($justification->document_path);
+});
+
+test('justification document download enforces school tenant isolation', function () {
+    Storage::fake('justifications');
+
+    $session = ClassSession::create([
+        'school_class_id' => $this->class->id,
+        'original_teacher_id' => $this->teacher->id,
+        'date' => today()->format('Y-m-d'),
+        'start_time' => '08:00',
+        'end_time' => '08:50',
+        'status' => 'COMPLETADA',
+    ]);
+
+    $absence = Attendance::create([
+        'class_session_id' => $session->id,
+        'student_id' => $this->student2->id,
+        'status' => 'AUSENTE',
+        'recorded_by_user_id' => $this->teacherUser->id,
+    ]);
+
+    $file = UploadedFile::fake()->create('certificado.pdf', 100, 'application/pdf');
+
+    Livewire::actingAs($this->admin)
+        ->test(Justifications::class, ['school' => $this->school])
+        ->call('openJustifyModal', $absence->id)
+        ->set('reason', 'Justificante oficial')
+        ->set('document', $file)
+        ->call('saveJustification');
+
+    $justification = AttendanceJustification::where('attendance_id', $absence->id)->first();
+
+    // 1. Authorized school admin can download the document
+    $this->actingAs($this->admin)
+        ->get(route('school.justifications.document', [$this->school, $justification]))
+        ->assertOk();
+
+    // 2. User from another school receives 403 or 404
+    $otherSchool = School::create(['name' => 'Escuela Secundaria 2', 'code' => 'SEC-002']);
+    $otherUser = User::factory()->create();
+    $otherSchool->memberships()->create([
+        'user_id' => $otherUser->id,
+        'role' => SchoolRole::DIRECTOR->value,
+    ]);
+
+    // Accessing this school's document directly by unauthorized user -> 404 (due to school access middleware)
+    $this->actingAs($otherUser)
+        ->get(route('school.justifications.document', [$this->school, $justification]))
+        ->assertNotFound();
+
+    // Accessing through other school URL attempting ID tampering -> 403
+    $this->actingAs($otherUser)
+        ->get(route('school.justifications.document', [$otherSchool, $justification]))
+        ->assertForbidden();
+});
+
+test('teacher-only user only sees own or substituted sessions while admin sees all school sessions', function () {
+    $otherTeacherUser = User::factory()->create(['name' => 'Otro Profesor']);
+    $otherTeacher = Teacher::create([
+        'first_name' => 'Octavio',
+        'last_name' => 'Paz',
+        'email' => 'octavio@example.com',
+        'user_id' => $otherTeacherUser->id,
+    ]);
+    TeacherSchool::create([
+        'teacher_id' => $otherTeacher->id,
+        'school_id' => $this->school->id,
+        'employee_number' => 'DOC-099',
+    ]);
+    $otherMembership = $this->school->memberships()->create([
+        'user_id' => $otherTeacherUser->id,
+        'role' => SchoolRole::PROFESOR->value,
+    ]);
+    $otherMembership->roles()->create(['role' => SchoolRole::PROFESOR->value]);
+
+    // Ensure teacherUser also has SchoolMembershipRole record
+    $teacherMembership = $this->school->memberships()->where('user_id', $this->teacherUser->id)->first();
+    $teacherMembership?->roles()->firstOrCreate(['role' => SchoolRole::PROFESOR->value]);
+
+    $otherSubject = Subject::create([
+        'school_id' => $this->school->id,
+        'name' => 'Literatura Universal',
+        'code' => 'LIT-01',
+    ]);
+
+    $otherClass = SchoolClass::create([
+        'school_id' => $this->school->id,
+        'school_year_id' => $this->schoolYear->id,
+        'subject_id' => $otherSubject->id,
+        'teacher_id' => $otherTeacher->id,
+        'school_group_id' => $this->group->id,
+        'is_workshop' => false,
+    ]);
+
+    $ownSession = ClassSession::create([
+        'school_class_id' => $this->class->id,
+        'original_teacher_id' => $this->teacher->id,
+        'date' => today()->format('Y-m-d'),
+        'start_time' => '08:00',
+        'end_time' => '08:50',
+        'status' => 'PROGRAMADA',
+    ]);
+
+    $otherSession = ClassSession::create([
+        'school_class_id' => $otherClass->id,
+        'original_teacher_id' => $otherTeacher->id,
+        'date' => today()->format('Y-m-d'),
+        'start_time' => '09:00',
+        'end_time' => '09:50',
+        'status' => 'PROGRAMADA',
+    ]);
+
+    // Teacher only sees their own session, not the other teacher's session
+    Livewire::actingAs($this->teacherUser)
+        ->test(DailyAttendance::class, ['school' => $this->school])
+        ->assertSee($this->subject->name)
+        ->assertDontSee('Literatura Universal')
+        ->call('selectSession', $otherSession->id)
+        ->assertStatus(403);
+
+    // Admin sees both sessions
+    Livewire::actingAs($this->admin)
+        ->test(DailyAttendance::class, ['school' => $this->school])
+        ->assertSee($this->subject->name)
+        ->assertSee('Literatura Universal');
+});
+
+test('openConfirmModal saves attendance immediately when 0 students are absent and opens modal when at least 1 is absent', function () {
+    $session = ClassSession::create([
+        'school_class_id' => $this->class->id,
+        'original_teacher_id' => $this->teacher->id,
+        'date' => today()->format('Y-m-d'),
+        'start_time' => '08:00',
+        'end_time' => '08:50',
+        'status' => 'PROGRAMADA',
+    ]);
+
+    // Case 1: All present or retardo (0 absent) -> saves directly without modal
+    Livewire::actingAs($this->teacherUser)
+        ->test(DailyAttendance::class, ['school' => $this->school])
+        ->call('selectSession', $session->id)
+        ->set("attendanceStates.{$this->student1->id}", 'PRESENTE')
+        ->set("attendanceStates.{$this->student2->id}", 'RETARDO')
+        ->call('openConfirmModal')
+        ->assertSet('showConfirmModal', false)
+        ->assertSet('activeSessionId', null);
+
+    expect($session->fresh()->status)->toBe('COMPLETADA');
+
+    // Case 2: At least 1 absent -> opens confirmation modal
+    Livewire::actingAs($this->teacherUser)
+        ->test(DailyAttendance::class, ['school' => $this->school])
+        ->call('selectSession', $session->id)
+        ->set("attendanceStates.{$this->student2->id}", 'AUSENTE')
+        ->call('openConfirmModal')
+        ->assertSet('showConfirmModal', true);
 });

@@ -15,7 +15,10 @@
         </div>
 
         <div class="flex items-center gap-2">
-            <flux:button variant="primary" icon="plus" wire:click="openCreateModal">
+            <flux:button variant="primary" icon="envelope" wire:click="openInviteModal">
+                Invitar Docente
+            </flux:button>
+            <flux:button variant="subtle" icon="plus" wire:click="openCreateModal">
                 Registrar Profesor
             </flux:button>
             <flux:button variant="ghost" icon="arrow-left" :href="route('school.dashboard', $school)" wire:navigate>
@@ -125,6 +128,79 @@
             </div>
         @endif
     </div>
+
+    <!-- Sección: Invitaciones Pendientes -->
+    @if ($pendingInvitations->isNotEmpty())
+        <div class="border border-amber-200 dark:border-amber-900/50 rounded-xl overflow-hidden bg-white dark:bg-zinc-900 shadow-xs">
+            <div class="p-4 bg-amber-50/50 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-900/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <flux:icon name="envelope" class="size-5 text-amber-600 dark:text-amber-400" />
+                    <flux:heading size="base" class="text-zinc-900 dark:text-zinc-100">
+                        Invitaciones Pendientes de Activación ({{ $pendingInvitations->count() }})
+                    </flux:heading>
+                </div>
+                <span class="text-xs text-zinc-500">Los docentes invitados deben abrir el enlace recibido por correo para completar su registro.</span>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left">
+                    <thead class="bg-zinc-50 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-300 font-medium border-b border-zinc-200 dark:border-zinc-700">
+                        <tr>
+                            <th class="py-2.5 px-4">Docente</th>
+                            <th class="py-2.5 px-4">Correo</th>
+                            <th class="py-2.5 px-4">Clave</th>
+                            <th class="py-2.5 px-4">Estado</th>
+                            <th class="py-2.5 px-4">Vence</th>
+                            <th class="py-2.5 px-4 text-right">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-zinc-200 dark:divide-zinc-700">
+                        @foreach ($pendingInvitations as $invitation)
+                            <tr class="hover:bg-zinc-50/50 dark:hover:bg-zinc-800/40 transition-colors">
+                                <td class="py-3 px-4 font-medium text-zinc-900 dark:text-zinc-100">
+                                    {{ $invitation->full_name }}
+                                </td>
+                                <td class="py-3 px-4 text-zinc-600 dark:text-zinc-300 font-mono text-xs">
+                                    {{ $invitation->email }}
+                                </td>
+                                <td class="py-3 px-4 text-zinc-500 font-mono text-xs">
+                                    {{ $invitation->employee_number ?? '—' }}
+                                </td>
+                                <td class="py-3 px-4">
+                                    <flux:badge size="xs" color="amber">Pendiente</flux:badge>
+                                </td>
+                                <td class="py-3 px-4 text-xs text-zinc-500">
+                                    {{ $invitation->expires_at->diffForHumans() }}
+                                </td>
+                                <td class="py-3 px-4 text-right">
+                                    <div class="inline-flex items-center gap-1">
+                                        <flux:button
+                                            size="sm"
+                                            variant="subtle"
+                                            wire:click="resendInvitation('{{ $invitation->id }}')"
+                                            title="Reenviar invitación por correo"
+                                        >
+                                            Reenviar
+                                        </flux:button>
+                                        <flux:button
+                                            size="sm"
+                                            variant="ghost"
+                                            class="text-red-600 hover:text-red-700 dark:text-red-400"
+                                            wire:click="revokeInvitation('{{ $invitation->id }}')"
+                                            wire:confirm="¿Deseas revocar la invitación para {{ $invitation->email }}?"
+                                            title="Revocar invitación"
+                                        >
+                                            Revocar
+                                        </flux:button>
+                                    </div>
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    @endif
 
     <!-- Modal: Registrar / Vincular Profesor -->
     <flux:modal wire:model="showCreateModal" class="md:w-2xl">
@@ -320,5 +396,74 @@
                 </flux:button>
             </div>
         </div>
+    </flux:modal>
+
+    <!-- Modal: Invitar Docente vía Correo Transaccional -->
+    <flux:modal wire:model="showInviteModal" class="md:w-lg">
+        <form wire:submit="sendInvitation" class="space-y-6">
+            <div>
+                <flux:heading size="lg">Invitar Docente por Correo</flux:heading>
+                <flux:subheading>
+                    Se enviará un correo seguro con enlace de activación temporal (3 días) para que el docente configure su propia contraseña.
+                </flux:subheading>
+            </div>
+
+            <div class="space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <flux:input
+                        wire:model="inviteFirstName"
+                        label="Nombre(s) *"
+                        placeholder="Ej. Roberto"
+                        required
+                    />
+
+                    <flux:input
+                        wire:model="inviteLastName"
+                        label="Apellidos *"
+                        placeholder="Ej. Gómez Bolaños"
+                        required
+                    />
+                </div>
+
+                <flux:input
+                    wire:model="inviteEmail"
+                    label="Correo Electrónico Institucional / Personal *"
+                    type="email"
+                    placeholder="docente@escuela.edu"
+                    required
+                />
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <flux:input
+                        wire:model="inviteEmployeeNumber"
+                        label="Clave / Matrícula (opcional)"
+                        placeholder="Ej. PROF-01"
+                    />
+
+                    <flux:input
+                        wire:model="invitePhone"
+                        label="Teléfono (opcional)"
+                        placeholder="Ej. 3312345678"
+                    />
+                </div>
+
+                <div class="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 p-3 text-xs text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700">
+                    <div class="font-medium text-zinc-900 dark:text-zinc-200 mb-1 flex items-center gap-1.5">
+                        <flux:icon name="shield-check" class="size-4 text-emerald-600 dark:text-emerald-400" />
+                        Seguridad de la invitación
+                    </div>
+                    El enlace utiliza un token criptográfico único con hash SHA-256. Ninguna contraseña es enviada por correo ni almacenada en texto plano.
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-3 pt-2">
+                <flux:button variant="ghost" wire:click="$set('showInviteModal', false)">
+                    Cancelar
+                </flux:button>
+                <flux:button type="submit" variant="primary" icon="paper-airplane">
+                    Enviar Invitación
+                </flux:button>
+            </div>
+        </form>
     </flux:modal>
 </div>

@@ -2,19 +2,23 @@
 
 namespace App\Livewire\School\SchoolYears;
 
+use App\Models\ClassSession;
 use App\Models\School;
 use App\Models\SchoolGroup;
+use App\Models\SchoolSuspension;
 use App\Models\SchoolYear;
 use App\Models\Shift;
 use Flux\Flux;
 use Illuminate\Contracts\View\View;
 use Illuminate\Validation\Rule;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
 #[Title('Ciclos y Grupos Escolares')]
 class Index extends Component
 {
+    #[Locked]
     public School $school;
 
     // Selected School Year
@@ -68,8 +72,19 @@ class Index extends Component
 
     public string $deletingGroupName = '';
 
+    // Modal Suspension Days
+    public bool $showSuspensionModal = false;
+
+    public ?string $suspensionYearId = null;
+
+    public string $newSuspensionDate = '';
+
+    public string $newSuspensionReason = '';
+
     public function mount(School $school): void
     {
+        abort_if(auth()->user()?->isTeacherOnly($school), 403);
+
         $this->school = $school;
 
         $activeYear = $this->school->schoolYears()
@@ -280,7 +295,7 @@ class Index extends Component
 
     public function openDeleteGroupModal(string $groupId): void
     {
-        $group = SchoolGroup::with('shift')->findOrFail($groupId);
+        $group = $this->school->schoolGroups()->with('shift')->findOrFail($groupId);
         $this->deletingGroupId = $group->id;
         $this->deletingGroupName = "{$group->grade}°{$group->section} ({$group->shift->name})";
         $this->showDeleteGroupModal = true;
@@ -288,7 +303,7 @@ class Index extends Component
 
     public function deleteGroup(): void
     {
-        $group = SchoolGroup::findOrFail($this->deletingGroupId);
+        $group = $this->school->schoolGroups()->findOrFail($this->deletingGroupId);
 
         $group->delete();
 
@@ -296,6 +311,63 @@ class Index extends Component
         $this->reset(['deletingGroupId', 'deletingGroupName']);
 
         Flux::toast(variant: 'success', text: 'Grupo eliminado exitosamente.');
+    }
+
+    public function openSuspensionModal(string $yearId): void
+    {
+        $this->suspensionYearId = $yearId;
+        $this->newSuspensionDate = '';
+        $this->newSuspensionReason = '';
+        $this->resetValidation();
+        $this->showSuspensionModal = true;
+    }
+
+    public function addSuspension(): void
+    {
+        $this->validate([
+            'suspensionYearId' => ['required', 'exists:school_years,id'],
+            'newSuspensionDate' => ['required', 'date'],
+            'newSuspensionReason' => ['required', 'string', 'max:255'],
+        ], [
+            'newSuspensionDate.required' => 'La fecha de suspensión es obligatoria.',
+            'newSuspensionReason.required' => 'El motivo de suspensión es obligatorio.',
+        ]);
+
+        $schoolYear = $this->school->schoolYears()->findOrFail($this->suspensionYearId);
+
+        $existing = SchoolSuspension::where('school_year_id', $schoolYear->id)
+            ->where('date', $this->newSuspensionDate)
+            ->first();
+
+        if ($existing) {
+            $this->addError('newSuspensionDate', 'Ya está registrado un día de suspensión en esta fecha.');
+
+            return;
+        }
+
+        SchoolSuspension::create([
+            'school_id' => $this->school->id,
+            'school_year_id' => $schoolYear->id,
+            'date' => $this->newSuspensionDate,
+            'reason' => trim($this->newSuspensionReason),
+        ]);
+
+        // Automatically delete any future/scheduled sessions on that date in the school without attendance
+        ClassSession::whereHas('schoolClass', fn ($q) => $q->where('school_id', $this->school->id))
+            ->whereDate('date', $this->newSuspensionDate)
+            ->whereDoesntHave('attendances')
+            ->delete();
+
+        $this->reset(['newSuspensionDate', 'newSuspensionReason']);
+        Flux::toast(variant: 'success', text: 'Día de suspensión registrado y sesiones sincronizadas.');
+    }
+
+    public function deleteSuspension(string $suspensionId): void
+    {
+        $suspension = SchoolSuspension::where('school_id', $this->school->id)->findOrFail($suspensionId);
+        $suspension->delete();
+
+        Flux::toast(variant: 'success', text: 'Día de suspensión eliminado.');
     }
 
     public function render(): View
@@ -321,11 +393,16 @@ class Index extends Component
 
         $shifts = Shift::orderBy('name')->get();
 
+        $suspensions = $this->suspensionYearId
+            ? SchoolSuspension::where('school_year_id', $this->suspensionYearId)->orderBy('date')->get()
+            : ($this->selectedYearId ? SchoolSuspension::where('school_year_id', $this->selectedYearId)->orderBy('date')->get() : collect());
+
         return view('livewire.school.school-years.index', [
             'schoolYears' => $schoolYears,
             'selectedYear' => $selectedYear,
             'groups' => $groups,
             'shifts' => $shifts,
+            'suspensions' => $suspensions,
         ]);
     }
 }

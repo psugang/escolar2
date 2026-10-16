@@ -3,6 +3,9 @@
 namespace App\Livewire\School\Teachers;
 
 use App\Enums\SchoolRole;
+use App\Mail\TeacherInvitationMail;
+use App\Models\AuditLog;
+use App\Models\Invitation;
 use App\Models\School;
 use App\Models\SchoolMembership;
 use App\Models\SchoolMembershipRole;
@@ -12,6 +15,10 @@ use App\Models\User;
 use Flux\Flux;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Livewire\WithPagination;
@@ -21,6 +28,7 @@ class Index extends Component
 {
     use WithPagination;
 
+    #[Locked]
     public School $school;
 
     public string $search = '';
@@ -46,6 +54,19 @@ class Index extends Component
 
     public string $existingTeacherId = '';
 
+    // Modal Invite Teacher
+    public bool $showInviteModal = false;
+
+    public string $inviteFirstName = '';
+
+    public string $inviteLastName = '';
+
+    public string $inviteEmail = '';
+
+    public string $inviteEmployeeNumber = '';
+
+    public string $invitePhone = '';
+
     // Modal Edit
     public bool $showEditModal = false;
 
@@ -70,6 +91,8 @@ class Index extends Component
 
     public function mount(School $school): void
     {
+        abort_if(auth()->user()?->isTeacherOnly($school), 403);
+
         $this->school = $school;
     }
 
@@ -202,7 +225,7 @@ class Index extends Component
 
     public function openEditModal(string $teacherId): void
     {
-        $teacher = Teacher::findOrFail($teacherId);
+        $teacher = $this->school->teachers()->findOrFail($teacherId);
 
         $this->editingTeacherId = $teacher->id;
         $this->editFirstName = $teacher->first_name;
@@ -217,7 +240,7 @@ class Index extends Component
 
     public function updateTeacher(): void
     {
-        $teacher = Teacher::findOrFail($this->editingTeacherId);
+        $teacher = $this->school->teachers()->findOrFail($this->editingTeacherId);
 
         $this->validate([
             'editFirstName' => ['required', 'string', 'max:100'],
@@ -241,7 +264,7 @@ class Index extends Component
 
     public function openUnlinkModal(string $teacherId): void
     {
-        $teacher = Teacher::findOrFail($teacherId);
+        $teacher = $this->school->teachers()->findOrFail($teacherId);
         $this->unlinkingTeacherId = $teacher->id;
         $this->unlinkingTeacherName = $teacher->full_name;
         $this->showUnlinkModal = true;
@@ -257,6 +280,145 @@ class Index extends Component
         $this->reset(['unlinkingTeacherId', 'unlinkingTeacherName']);
 
         Flux::toast(variant: 'success', text: 'Profesor desvinculado de este plantel.');
+    }
+
+    public function openInviteModal(): void
+    {
+        $this->reset([
+            'inviteFirstName',
+            'inviteLastName',
+            'inviteEmail',
+            'inviteEmployeeNumber',
+            'invitePhone',
+        ]);
+        $this->resetValidation();
+        $this->showInviteModal = true;
+    }
+
+    public function sendInvitation(): void
+    {
+        $this->validate([
+            'inviteFirstName' => ['required', 'string', 'max:100'],
+            'inviteLastName' => ['required', 'string', 'max:100'],
+            'inviteEmail' => ['required', 'email', 'max:150'],
+            'inviteEmployeeNumber' => ['nullable', 'string', 'max:50'],
+            'invitePhone' => ['nullable', 'string', 'max:30'],
+        ], [
+            'inviteFirstName.required' => 'El nombre es obligatorio.',
+            'inviteLastName.required' => 'Los apellidos son obligatorios.',
+            'inviteEmail.required' => 'El correo electrónico es obligatorio.',
+            'inviteEmail.email' => 'El correo electrónico no es válido.',
+        ]);
+
+        $email = strtolower(trim($this->inviteEmail));
+
+        $alreadyTeacherInSchool = Teacher::where('email', $email)
+            ->whereHas('teacherSchools', fn ($q) => $q->where('school_id', $this->school->id))
+            ->exists();
+
+        if ($alreadyTeacherInSchool) {
+            $this->addError('inviteEmail', 'Este profesor ya está adscrito a este plantel escolar.');
+
+            return;
+        }
+
+        $inviter = auth()->user();
+        if (! $inviter) {
+            $this->addError('inviteEmail', 'Usuario no autenticado.');
+
+            return;
+        }
+
+        $rateLimitKey = 'teacher-invite:'.$this->school->id.':'.$inviter->id;
+        if (RateLimiter::tooManyAttempts($rateLimitKey, 5)) {
+            $seconds = RateLimiter::availableIn($rateLimitKey);
+            Flux::toast(variant: 'danger', text: "Límite de invitaciones alcanzado. Espera {$seconds} segundos.");
+
+            return;
+        }
+        RateLimiter::hit($rateLimitKey, 60);
+
+        $result = Invitation::createInvitation($this->school, $inviter, [
+            'email' => $email,
+            'first_name' => $this->inviteFirstName,
+            'last_name' => $this->inviteLastName,
+            'employee_number' => $this->inviteEmployeeNumber,
+            'phone' => $this->invitePhone,
+            'role' => SchoolRole::PROFESOR->value,
+        ]);
+
+        Mail::to($result['invitation']->email)->send(
+            new TeacherInvitationMail($result['invitation'], $result['plain_token'])
+        );
+
+        AuditLog::record(
+            action: 'PROFESOR_INVITADO',
+            description: "Se envió invitación al docente {$result['invitation']->full_name} al correo {$result['invitation']->email}.",
+            school: $this->school,
+            user: $inviter,
+            newValues: [
+                'email' => $result['invitation']->email,
+                'role' => SchoolRole::PROFESOR->value,
+                'invitation_id' => $result['invitation']->id,
+            ]
+        );
+
+        $this->showInviteModal = false;
+        Flux::toast(variant: 'success', text: "Invitación enviada a {$result['invitation']->email}.");
+    }
+
+    public function resendInvitation(string $invitationId): void
+    {
+        $inviterId = auth()->id() ?? 'guest';
+        $rateLimitKey = 'teacher-resend:'.$this->school->id.':'.$inviterId;
+        if (RateLimiter::tooManyAttempts($rateLimitKey, 5)) {
+            $seconds = RateLimiter::availableIn($rateLimitKey);
+            Flux::toast(variant: 'danger', text: "Límite de reenvíos alcanzado. Espera {$seconds} segundos.");
+
+            return;
+        }
+        RateLimiter::hit($rateLimitKey, 60);
+
+        $invitation = Invitation::where('id', $invitationId)
+            ->where('school_id', $this->school->id)
+            ->where('status', 'PENDING')
+            ->first();
+
+        if (! $invitation) {
+            Flux::toast(variant: 'danger', text: 'La invitación no es válida o ya expiró.');
+
+            return;
+        }
+
+        $plainToken = Str::random(48);
+        $invitation->update([
+            'token_hash' => hash('sha256', $plainToken),
+            'expires_at' => now()->addDays(3),
+        ]);
+
+        Mail::to($invitation->email)->send(
+            new TeacherInvitationMail($invitation, $plainToken)
+        );
+
+        Flux::toast(variant: 'success', text: "Invitación reenviada a {$invitation->email}.");
+    }
+
+    public function revokeInvitation(string $invitationId): void
+    {
+        $invitation = Invitation::where('id', $invitationId)
+            ->where('school_id', $this->school->id)
+            ->where('status', 'PENDING')
+            ->first();
+
+        if (! $invitation) {
+            Flux::toast(variant: 'danger', text: 'Invitación no encontrada.');
+
+            return;
+        }
+
+        $invitation->update(['status' => 'REVOKED']);
+
+        Flux::toast(variant: 'success', text: "Invitación revocada para {$invitation->email}.");
     }
 
     public function render(): View
@@ -283,9 +445,17 @@ class Index extends Component
             ->orderBy('last_name')
             ->get();
 
+        $pendingInvitations = Invitation::query()
+            ->where('school_id', $this->school->id)
+            ->where('status', 'PENDING')
+            ->where('expires_at', '>', now())
+            ->latest()
+            ->get();
+
         return view('livewire.school.teachers.index', [
             'teachers' => $teachers,
             'otherTeachers' => $otherTeachers,
+            'pendingInvitations' => $pendingInvitations,
         ]);
     }
 }

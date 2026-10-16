@@ -137,7 +137,7 @@ test('taking attendance with absent student sends email notification to guardian
         ->set('sendGuardianNotifications', true)
         ->call('saveAttendance');
 
-    Mail::assertSent(StudentAbsenceNotificationMail::class, function ($mail) {
+    Mail::assertQueued(StudentAbsenceNotificationMail::class, function ($mail) {
         return $mail->hasTo('luisa.santiaga@example.com') &&
                $mail->student->id === $this->student->id;
     });

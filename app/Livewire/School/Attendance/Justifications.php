@@ -10,6 +10,9 @@ use Flux\Flux;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Livewire\WithFileUploads;
@@ -20,6 +23,7 @@ class Justifications extends Component
 {
     use WithFileUploads, WithPagination;
 
+    #[Locked]
     public School $school;
 
     public string $search = '';
@@ -27,8 +31,10 @@ class Justifications extends Component
     // Modal Create Justification
     public bool $showJustifyModal = false;
 
+    #[Locked]
     public ?string $selectedAttendanceId = null;
 
+    #[Locked]
     public ?Attendance $selectedAttendance = null;
 
     public string $reason = '';
@@ -53,11 +59,12 @@ class Justifications extends Component
     public function openJustifyModal(string $attendanceId): void
     {
         $this->selectedAttendanceId = $attendanceId;
-        $this->selectedAttendance = Attendance::with([
-            'student',
-            'classSession.schoolClass.subject',
-            'classSession.schoolClass.schoolGroup',
-        ])->findOrFail($attendanceId);
+        $this->selectedAttendance = Attendance::whereHas('classSession.schoolClass', fn ($q) => $q->where('school_id', $this->school->id))
+            ->with([
+                'student',
+                'classSession.schoolClass.subject',
+                'classSession.schoolClass.schoolGroup',
+            ])->findOrFail($attendanceId);
 
         $this->reason = '';
         $this->document = null;
@@ -81,7 +88,7 @@ class Justifications extends Component
 
         if ($this->document) {
             $name = $this->document->getClientOriginalName();
-            $path = $this->document->store('justificantes', 'public');
+            $path = $this->processAndStoreDocument($this->document);
         }
 
         $user = Auth::user();
@@ -108,6 +115,41 @@ class Justifications extends Component
         Flux::toast(variant: 'success', text: 'Justificante registrado exitosamente.');
     }
 
+    protected function processAndStoreDocument(UploadedFile $file): string
+    {
+        $extension = strtolower($file->getClientOriginalExtension());
+        $mime = (string) $file->getMimeType();
+
+        // Convert raster images (png, jpg, jpeg, webp) to WebP using native GD
+        if (in_array($extension, ['jpg', 'jpeg', 'png', 'webp'], true) || str_starts_with($mime, 'image/')) {
+            $realPath = $file->getRealPath();
+            if ($realPath) {
+                $contents = file_get_contents($realPath);
+                if ($contents !== false) {
+                    $image = @imagecreatefromstring($contents);
+                    if ($image !== false) {
+                        imagepalettetotruecolor($image);
+                        imagealphablending($image, true);
+                        imagesavealpha($image, true);
+
+                        ob_start();
+                        imagewebp($image, null, 80);
+                        $webpData = (string) ob_get_clean();
+                        imagedestroy($image);
+
+                        $path = 'justificantes/'.Str::uuid().'.webp';
+                        Storage::disk('justifications')->put($path, $webpData);
+
+                        return $path;
+                    }
+                }
+            }
+        }
+
+        // For PDFs or fallback
+        return (string) $file->store('justificantes', 'justifications');
+    }
+
     public function openDeleteModal(string $justificationId): void
     {
         $this->deletingJustificationId = $justificationId;
@@ -116,9 +158,15 @@ class Justifications extends Component
 
     public function deleteJustification(): void
     {
-        $justification = AttendanceJustification::with('attendance.student')->findOrFail($this->deletingJustificationId);
+        $justification = AttendanceJustification::whereHas('attendance.classSession.schoolClass', fn ($q) => $q->where('school_id', $this->school->id))
+            ->with('attendance.student')
+            ->findOrFail($this->deletingJustificationId);
         $studentName = $justification->attendance?->student?->full_name;
         $reason = $justification->reason;
+
+        if ($justification->document_path) {
+            Storage::disk('justifications')->delete($justification->document_path);
+        }
 
         $justification->delete();
 

@@ -10,14 +10,16 @@
             </div>
             <flux:heading size="xl" level="1" class="mt-1">{{ $school->name }}</flux:heading>
             <flux:subheading>
-                Panel de control operativo y gestión escolar.
+                {{ $isTeacherOnly ? 'Panel del docente y gestión de clases.' : 'Panel de control operativo y gestión escolar.' }}
             </flux:subheading>
         </div>
 
         <div class="flex items-center gap-2">
-            <flux:button variant="subtle" icon="calendar" :href="route('school.years.index', $school)" wire:navigate>
-                Ciclos y Grupos
-            </flux:button>
+            @if (! $isTeacherOnly)
+                <flux:button variant="subtle" icon="calendar" :href="route('school.years.index', $school)" wire:navigate>
+                    Ciclos y Grupos
+                </flux:button>
+            @endif
             @if (auth()->user()?->isGlobalAdmin())
                 <flux:button variant="ghost" icon="arrow-left" :href="route('admin.schools.index')" wire:navigate>
                     Volver a Escuelas
@@ -26,8 +28,91 @@
         </div>
     </div>
 
-    <!-- Tarjetas de métricas -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    @if ($hasTeacherRole)
+        <!-- Sección Mobile-First: Mis Clases de Hoy -->
+        <div class="space-y-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <div class="flex items-center gap-2">
+                        <flux:badge size="sm" color="indigo">{{ today()->translatedFormat('l, d \d\e F') }}</flux:badge>
+                        <flux:badge size="sm" color="emerald">Hoy</flux:badge>
+                    </div>
+                    <flux:heading size="lg" level="2" class="mt-1">Mis Clases de Hoy</flux:heading>
+                    <flux:subheading>
+                        Horarios y acceso directo para pase de lista rápido.
+                    </flux:subheading>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                @forelse ($todaySessions as $session)
+                    @php
+                        $isCompleted = $session->status === 'COMPLETADA';
+                        $absentCount = $session->attendances->where('status', 'AUSENTE')->count();
+                    @endphp
+                    <div class="p-5 bg-white dark:bg-zinc-900 border-2 {{ $isCompleted ? 'border-zinc-200 dark:border-zinc-700' : 'border-indigo-500/60 dark:border-indigo-400/60 shadow-sm' }} rounded-xl flex flex-col justify-between space-y-4">
+                        <div class="space-y-2.5">
+                            <div class="flex items-center justify-between">
+                                <span class="font-mono text-xs font-bold px-2.5 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200">
+                                    {{ substr($session->start_time, 0, 5) }} — {{ substr($session->end_time, 0, 5) }}
+                                </span>
+
+                                @if ($isCompleted)
+                                    <flux:badge size="sm" color="emerald" icon="check-circle">Asistencia Lista</flux:badge>
+                                @else
+                                    <flux:badge size="sm" color="amber" icon="clock">Pendiente</flux:badge>
+                                @endif
+                            </div>
+
+                            <div>
+                                <h3 class="font-bold text-lg text-zinc-900 dark:text-zinc-100 leading-tight">
+                                    {{ $session->schoolClass->display_name }}
+                                </h3>
+                                <div class="flex items-center gap-2 mt-1.5 flex-wrap">
+                                    @if ($session->schoolClass->is_workshop)
+                                        <flux:badge size="xs" color="purple">Taller</flux:badge>
+                                    @elseif ($session->schoolClass->schoolGroup)
+                                        <flux:badge size="xs" color="zinc">
+                                            {{ $session->schoolClass->schoolGroup->grade }}° '{{ $session->schoolClass->schoolGroup->section }}' ({{ $session->schoolClass->schoolGroup->shift?->name }})
+                                        </flux:badge>
+                                    @endif
+                                    <span class="text-xs text-zinc-400">· Plantel {{ $school->name }}</span>
+                                </div>
+                            </div>
+
+                            @if ($isCompleted && $absentCount > 0)
+                                <div class="text-xs font-semibold text-red-600 dark:text-red-400 flex items-center gap-1">
+                                    <span>⚠ {{ $absentCount }} inasistencia(s) registrada(s)</span>
+                                </div>
+                            @endif
+                        </div>
+
+                        <div class="pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                            <flux:button
+                                variant="{{ $isCompleted ? 'subtle' : 'primary' }}"
+                                class="w-full min-h-[48px] text-base font-semibold"
+                                icon="clipboard-document-check"
+                                :href="route('school.attendance.daily', [$school, 'session' => $session->id])"
+                                wire:navigate
+                            >
+                                {{ $isCompleted ? 'Editar Pase de Lista' : 'Pasar Lista Ahora' }}
+                            </flux:button>
+                        </div>
+                    </div>
+                @empty
+                    <div class="col-span-full py-8 text-center text-zinc-500 dark:text-zinc-400 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-700 p-6">
+                        <flux:icon name="calendar" class="size-8 mx-auto text-zinc-400" />
+                        <p class="font-medium mt-2">No tienes clases programadas para el día de hoy.</p>
+                        <p class="text-xs text-zinc-400 mt-1">Si consideras que es un error, consulta con la dirección de la escuela.</p>
+                    </div>
+                @endforelse
+            </div>
+        </div>
+    @endif
+
+    @if (! $isTeacherOnly)
+        <!-- Tarjetas de métricas administrativas -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <!-- Ciclo Actual -->
         <div class="p-5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-xs">
             <div class="flex items-center justify-between">
@@ -198,5 +283,6 @@
             </div>
         </a>
     </div>
+    @endif
 </div>
 
